@@ -1,16 +1,21 @@
 import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright";
 import type { FlowwebConfig } from "../config.js";
 import type { PageInfo } from "../types.js";
 
-export class BrowserManager {
+export const BrowserManagerEvents = {
+  PAGES_CHANGED: "pagesChanged",
+  STATUS_CHANGED: "statusChanged",
+} as const;
+
+export class BrowserManager extends EventEmitter {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private pageById = new Map<string, Page>();
   private pageInfos = new Map<string, PageInfo>();
   private activePageId: string | null = null;
-  private onPagesChanged: (() => void) | null = null;
 
   getPageInfos(): PageInfo[] {
     return Array.from(this.pageInfos.values());
@@ -46,7 +51,7 @@ export class BrowserManager {
     if (info) {
       this.pageInfos.set(pageId, { ...info, active: true });
     }
-    this.onPagesChanged?.();
+    this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
   }
 
   async closePage(pageId: string): Promise<void> {
@@ -58,10 +63,6 @@ export class BrowserManager {
     } catch {
       // page may already be closed
     }
-  }
-
-  onPageListChanged(callback: () => void): void {
-    this.onPagesChanged = callback;
   }
 
   async createSession(config: FlowwebConfig, url: string): Promise<void> {
@@ -84,6 +85,8 @@ export class BrowserManager {
     const initialPage = await this.context.newPage();
     // registerPage is called automatically via context.on("page")
     await initialPage.goto(url);
+
+    this.emit(BrowserManagerEvents.STATUS_CHANGED, "connected");
   }
 
   async closeSession(): Promise<void> {
@@ -99,12 +102,13 @@ export class BrowserManager {
       this.browser = null;
       this.context = null;
     }
-    this.onPagesChanged?.();
+    this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
+    this.emit(BrowserManagerEvents.STATUS_CHANGED, "disconnected");
   }
 
   async dispose(): Promise<void> {
-    this.onPagesChanged = null;
     await this.closeSession();
+    this.removeAllListeners();
   }
 
   private generatePageId(): string {
@@ -119,7 +123,7 @@ export class BrowserManager {
 
   private registerPage(page: Page): void {
     const pageId = this.generatePageId();
-    const now = new Date();
+    const now = new Date().toISOString();
 
     if (this.activePageId) {
       const prevInfo = this.pageInfos.get(this.activePageId);
@@ -147,7 +151,7 @@ export class BrowserManager {
       this.registerPage(popup);
     });
 
-    this.onPagesChanged?.();
+    this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
   }
 
   private setupPageListeners(page: Page, pageId: string): void {
@@ -173,7 +177,7 @@ export class BrowserManager {
         }
       }
 
-      this.onPagesChanged?.();
+      this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
     });
   }
 
@@ -198,7 +202,7 @@ export class BrowserManager {
             ...current,
             title: title || current.url,
           });
-          this.onPagesChanged?.();
+          this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
         }
       })
       .catch(() => {});

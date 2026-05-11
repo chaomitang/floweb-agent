@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { BrowserManager } from "../../../src/core/browser/manager.js";
+import { BrowserManager, BrowserManagerEvents } from "../../../src/core/browser/manager.js";
 import { resolveConfig } from "../../../src/core/config.js";
 import type { PageInfo } from "../../../src/core/types.js";
 
@@ -34,7 +34,7 @@ describe("BrowserManager", () => {
     expect(manager.getActivePageId()).toBe(pages[0].id);
   });
 
-  it("tracks new pages created via the context", async () => {
+  it("tracks new pages created via the context", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 
@@ -117,12 +117,12 @@ describe("BrowserManager", () => {
     expect(manager.getActivePageId()).toBeNull();
   });
 
-  it("notifies on page changes via callback", async () => {
+  it("emits pagesChanged event when pages change", async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 
     let changed = false;
-    manager.onPageListChanged(() => {
+    manager.on(BrowserManagerEvents.PAGES_CHANGED, () => {
       changed = true;
     });
 

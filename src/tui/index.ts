@@ -3,8 +3,15 @@ import React from "react";
 import { App } from "./app.js";
 import type { FlowwebConfig } from "../core/config.js";
 
-export function startTui(config?: FlowwebConfig) {
-  const { unmount, waitUntilExit } = render(React.createElement(App, { config }));
+export interface StartTuiOptions {
+  config?: FlowwebConfig;
+  socketPath?: string;
+}
+
+export function startTui(options?: StartTuiOptions) {
+  const { unmount, waitUntilExit } = render(
+    React.createElement(App, { config: options?.config }),
+  );
 
   return {
     unmount,

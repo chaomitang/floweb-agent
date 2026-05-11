@@ -41,14 +41,14 @@ describe("TabBar", () => {
         url: "https://example.com",
         title: "Example",
         active: true,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
       },
       {
         id: "page-c2d",
         url: "https://example.org",
         title: "Example Org",
         active: false,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
       },
     ];
     const { lastFrame } = render(
@@ -70,7 +70,7 @@ describe("TabBar", () => {
         url: "https://very-long-domain-name-that-exceeds-limit.com/path",
         title: "Loading...",
         active: false,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
       },
     ];
     const { lastFrame } = render(
@@ -111,7 +111,7 @@ describe("PageView", () => {
       url: "https://example.com",
       title: "Example Domain",
       active: true,
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(),
     };
     const { lastFrame } = render(
       React.createElement(PageView, {
