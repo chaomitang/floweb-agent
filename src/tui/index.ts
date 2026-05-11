@@ -10,7 +10,7 @@ export interface StartTuiOptions {
 
 export function startTui(options?: StartTuiOptions) {
   const { unmount, waitUntilExit } = render(
-    React.createElement(App, { config: options?.config }),
+    React.createElement(App, { config: options?.config, socketPath: options?.socketPath }),
   );
 
   return {

@@ -9,9 +9,10 @@ import type { FlowwebConfig } from "../core/config.js";
 
 interface AppProps {
   config?: FlowwebConfig;
+  socketPath?: string;
 }
 
-export function App({ config }: AppProps) {
+export function App({ config, socketPath }: AppProps) {
   const { state, setMessage, setPages, setSessionStatus } = useBrowserState();
   const clientRef = React.useRef<DaemonClient | null>(null);
   const pagesRef = React.useRef(state.pages);
@@ -24,7 +25,7 @@ export function App({ config }: AppProps) {
   // Connect to daemon on mount
   React.useEffect(() => {
     let mounted = true;
-    const socketPath = getDaemonSocketPath();
+    const sp = socketPath ?? getDaemonSocketPath();
 
     const handlers: ClientApi = {
       pagesChanged(pages, activePageId) {
@@ -42,7 +43,7 @@ export function App({ config }: AppProps) {
       try {
         // Try connecting to an existing daemon first
         setSessionStatus("connecting", "Connecting to daemon...");
-        const client = await DaemonClient.connect(socketPath, handlers);
+        const client = await DaemonClient.connect(sp, handlers);
         if (!mounted) {
           client.destroy();
           return;
@@ -80,7 +81,7 @@ export function App({ config }: AppProps) {
       clientRef.current?.destroy();
       clientRef.current = null;
     };
-  }, [config, setPages, setMessage, setSessionStatus]);
+  }, [config, socketPath, setPages, setMessage, setSessionStatus]);
 
   useInput((input, key) => {
     if (key.escape) {

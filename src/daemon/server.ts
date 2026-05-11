@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:net";
 import { BrowserManager, BrowserManagerEvents } from "../core/browser/manager.js";
 import type { FlowwebConfig } from "../core/config.js";
+import { writeSessionState } from "../core/session-state.js";
 import { createIpcSocketServer, listenOnIpcSocket, removeStaleSocketFile } from "./ipc/socket.js";
 import { createIpcPeer } from "./ipc/protocol.js";
 import type { IpcPeer, IpcTransport, IpcProtocolMessage } from "./ipc/protocol.js";
@@ -12,15 +14,18 @@ export class DaemonServer {
   private config: FlowwebConfig;
   private server: Server | null = null;
   private clients = new Set<IpcPeer<ClientApi>>();
+  private sessionId: string;
 
   constructor(browserManager: BrowserManager, config: FlowwebConfig) {
     this.browserManager = browserManager;
     this.config = config;
+    this.sessionId = randomUUID();
 
-    // Broadcast BrowserManager events to all connected clients
+    // Broadcast BrowserManager events to all connected clients + persist state
     this.browserManager.on(
       BrowserManagerEvents.PAGES_CHANGED,
       (pages: PageInfo[], activePageId: string | null) => {
+        this.persistState();
         for (const client of this.clients) {
           try {
             void client.call.pagesChanged(pages, activePageId);
@@ -34,6 +39,7 @@ export class DaemonServer {
     this.browserManager.on(
       BrowserManagerEvents.STATUS_CHANGED,
       (status: string) => {
+        this.persistState();
         for (const client of this.clients) {
           try {
             void client.call.sessionStatusChanged(status);
@@ -53,6 +59,7 @@ export class DaemonServer {
     });
 
     await listenOnIpcSocket(this.server, socketPath);
+    this.persistState();
   }
 
   private handleConnection(transport: IpcTransport<IpcProtocolMessage>): void {
@@ -95,6 +102,22 @@ export class DaemonServer {
 
     const status = this.browserManager.getSessionStatus();
     void peer.call.sessionStatusChanged(status);
+  }
+
+  private persistState(): void {
+    try {
+      writeSessionState(this.config.sessionDir, {
+        version: 1 as const,
+        sessionId: this.sessionId,
+        pid: process.pid,
+        pages: this.browserManager.getPageInfos(),
+        activePageId: this.browserManager.getActivePageId(),
+        startedAt: new Date().toISOString(),
+        config: this.config,
+      });
+    } catch {
+      // Best-effort persistence
+    }
   }
 
   async stop(): Promise<void> {
