@@ -27,7 +27,7 @@ async function main() {
 
     case "tui": {
       const config = resolveConfig(cliArgs);
-      const { waitUntilExit } = startTui({ config, socketPath });
+      const { waitUntilExit } = startTui({ config, socketPath, initialUrl: cliArgs.url });
       try {
         await waitUntilExit();
       } catch (err) {

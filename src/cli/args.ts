@@ -32,8 +32,13 @@ export function parseCliArgs(rawArgs: string[]): CliArgs {
       continue;
     }
 
-    // "open" subcommand: next positional arg is url
-    if (args["subcommand"] === "open" && posIdx === 1 && !arg.startsWith("-")) {
+    // "open" or "tui" subcommand: next positional arg is url
+    if (
+      (args["subcommand"] === "open" || args["subcommand"] === "tui") &&
+      posIdx === 1 &&
+      !arg.startsWith("-") &&
+      !SUBCOMMANDS.includes(arg)
+    ) {
       args["url"] = arg;
       posIdx++;
       continue;

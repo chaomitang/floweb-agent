@@ -39,6 +39,19 @@ export function PageView({ activePage, sessionStatus }: PageViewProps) {
           </Text>
         </Box>
         <Text dimColor>{message}</Text>
+        {sessionStatus === "connected" && (
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>─────────────────────────────</Text>
+            <Text>
+              Open a page via CLI:{' '}
+              <Text color="yellow">flowweb open https://example.com</Text>
+            </Text>
+            <Text>
+              Or restart with URL:{' '}
+              <Text color="yellow">pnpm start https://example.com</Text>
+            </Text>
+          </Box>
+        )}
       </Box>
     );
   }

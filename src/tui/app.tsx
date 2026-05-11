@@ -10,9 +10,10 @@ import type { FlowwebConfig } from "../core/config.js";
 interface AppProps {
   config?: FlowwebConfig;
   socketPath?: string;
+  initialUrl?: string;
 }
 
-export function App({ config, socketPath }: AppProps) {
+export function App({ config, socketPath, initialUrl }: AppProps) {
   const { state, setMessage, setPages, setSessionStatus } = useBrowserState();
   const clientRef = React.useRef<DaemonClient | null>(null);
   const pagesRef = React.useRef(state.pages);
@@ -40,10 +41,12 @@ export function App({ config, socketPath }: AppProps) {
     };
 
     async function connect() {
+      let client: DaemonClient;
+
       try {
         // Try connecting to an existing daemon first
         setSessionStatus("connecting", "Connecting to daemon...");
-        const client = await DaemonClient.connect(sp, handlers);
+        client = await DaemonClient.connect(sp, handlers);
         if (!mounted) {
           client.destroy();
           return;
@@ -60,16 +63,30 @@ export function App({ config, socketPath }: AppProps) {
 
         try {
           setSessionStatus("connecting", "Starting daemon...");
-          const { client } = await DaemonClient.spawn(config, handlers);
+          const spawned = await DaemonClient.spawn(config, handlers);
           if (!mounted) {
-            client.destroy();
+            spawned.client.destroy();
             return;
           }
+          client = spawned.client;
           clientRef.current = client;
           setSessionStatus("connected", "Daemon started");
         } catch (err) {
           if (!mounted) return;
           setSessionStatus("error", `Failed to start daemon: ${String(err)}`);
+          return;
+        }
+      }
+
+      // Auto-open initial URL if provided and no pages exist
+      if (initialUrl && mounted) {
+        try {
+          const pages = await client.remote.getPages();
+          if (pages.length === 0) {
+            await client.remote.createSession(initialUrl);
+          }
+        } catch {
+          // Ignore if session already exists
         }
       }
     }
@@ -81,7 +98,7 @@ export function App({ config, socketPath }: AppProps) {
       clientRef.current?.destroy();
       clientRef.current = null;
     };
-  }, [config, socketPath, setPages, setMessage, setSessionStatus]);
+  }, [config, socketPath, initialUrl, setPages, setMessage, setSessionStatus]);
 
   useInput((input, key) => {
     if (key.escape) {
