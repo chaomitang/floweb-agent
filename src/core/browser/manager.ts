@@ -70,6 +70,11 @@ export class BrowserManager extends EventEmitter {
       await this.closeSession();
     }
 
+    // Normalize URL: prepend https:// if no protocol
+    if (!/^https?:\/\//i.test(url)) {
+      url = `https://${url}`;
+    }
+
     this.browser = await chromium.launch({
       headless: config.headless,
     });

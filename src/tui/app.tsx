@@ -83,10 +83,11 @@ export function App({ config, socketPath, initialUrl }: AppProps) {
         try {
           const pages = await client.remote.getPages();
           if (pages.length === 0) {
+            setMessage(`Opening ${initialUrl}...`);
             await client.remote.createSession(initialUrl);
           }
-        } catch {
-          // Ignore if session already exists
+        } catch (err) {
+          setSessionStatus("error", `Failed to open ${initialUrl}: ${String(err)}`);
         }
       }
     }
