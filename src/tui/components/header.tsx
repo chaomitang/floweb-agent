@@ -1,17 +1,28 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-export function Header() {
+interface HeaderProps {
+  sessionName?: string;
+}
+
+export function Header({ sessionName }: HeaderProps) {
   return (
     <Box
       borderStyle="round"
       borderColor="blue"
       paddingX={1}
-      justifyContent="center"
+      flexDirection="column"
     >
-      <Text bold color="blue">
-        Flowweb v0.1.0 -- TUI Browser Automation
-      </Text>
+      <Box justifyContent="center">
+        <Text bold color="blue">
+          Flowweb v0.1.0 -- TUI Browser Automation
+        </Text>
+      </Box>
+      {sessionName && (
+        <Box justifyContent="center">
+          <Text dimColor>Session: {sessionName}</Text>
+        </Box>
+      )}
     </Box>
   );
 }

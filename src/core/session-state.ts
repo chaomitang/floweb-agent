@@ -7,6 +7,7 @@ import { PageInfoSchema } from "../shared/schemas.js";
 const SessionStateSchema = z.object({
   version: z.literal(1),
   sessionId: z.string(),
+  sessionName: z.string().optional(),
   port: z.number().optional(),
   pid: z.number().optional(),
   cdpEndpoint: z.string().optional(),
@@ -40,6 +41,11 @@ export function writeSessionState(sessionDir: string, state: SessionState): void
   const filePath = sessionFilePath(sessionDir);
   if (!existsSync(sessionDir)) {
     mkdirSync(sessionDir, { recursive: true });
+  }
+  // Ensure conversations/ subdirectory exists
+  const conversationsDir = join(sessionDir, "conversations");
+  if (!existsSync(conversationsDir)) {
+    mkdirSync(conversationsDir, { recursive: true });
   }
   const validated = SessionStateSchema.parse(state);
   writeFileSync(filePath, JSON.stringify(validated, null, 2), "utf-8");

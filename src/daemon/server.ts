@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Server } from "node:net";
 import { BrowserManager, BrowserManagerEvents } from "../core/browser/manager.js";
 import type { FlowwebConfig } from "../core/config.js";
+import { getSessionDir } from "../core/config.js";
 import { writeSessionState } from "../core/session-state.js";
+import { listSessions, deleteSessionDir } from "../core/session-manager.js";
+import { appendAction } from "../core/session-logs.js";
 import { createIpcSocketServer, listenOnIpcSocket, removeStaleSocketFile } from "./ipc/socket.js";
 import { createIpcPeer } from "./ipc/protocol.js";
 import type { IpcPeer, IpcTransport, IpcProtocolMessage } from "./ipc/protocol.js";
@@ -85,6 +90,17 @@ export class DaemonServer {
       closeSession: () => {
         return this.browserManager.closeSession();
       },
+
+      getSessionName: () => this.config.sessionName,
+
+      listSessions: () => listSessions(this.config.sessionDir),
+
+      deleteSession: (name: string) => {
+        if (name === this.config.sessionName) {
+          throw new Error("Cannot delete the active session");
+        }
+        deleteSessionDir(this.config.sessionDir, name);
+      },
     };
 
     const peer = createIpcPeer<ClientApi, DaemonApi>(transport, handlers);
@@ -106,14 +122,29 @@ export class DaemonServer {
 
   private persistState(): void {
     try {
-      writeSessionState(this.config.sessionDir, {
+      const sessionDir = getSessionDir(this.config);
+      writeSessionState(sessionDir, {
         version: 1 as const,
         sessionId: this.sessionId,
+        sessionName: this.config.sessionName,
         pid: process.pid,
         pages: this.browserManager.getPageInfos(),
         activePageId: this.browserManager.getActivePageId(),
         startedAt: new Date().toISOString(),
         config: this.config,
+      });
+
+      // Ensure conversations/ subdirectory exists
+      const conversationsDir = join(sessionDir, "conversations");
+      if (!existsSync(conversationsDir)) {
+        mkdirSync(conversationsDir, { recursive: true });
+      }
+
+      // Log action to JSONL
+      appendAction(sessionDir, {
+        type: "state_persisted",
+        timestamp: new Date().toISOString(),
+        data: { pageCount: this.browserManager.getPageInfos().length },
       });
     } catch {
       // Best-effort persistence

@@ -7,6 +7,7 @@ export const CliArgsSchema = z.object({
     .enum(["tui", "open", "snapshot", "pages", "close", "daemon"])
     .default("tui"),
   url: z.string().optional(),
+  sessionName: z.string().optional(),
   socketPath: z.string().optional(),
   headless: z.boolean().default(false),
   provider: z.string().optional(),
@@ -32,9 +33,21 @@ export function parseCliArgs(rawArgs: string[]): CliArgs {
       continue;
     }
 
-    // "open" or "tui" subcommand: next positional arg is url
+    // "tui" subcommand: next positional arg is sessionName
     if (
-      (args["subcommand"] === "open" || args["subcommand"] === "tui") &&
+      args["subcommand"] === "tui" &&
+      posIdx === 1 &&
+      !arg.startsWith("-") &&
+      !SUBCOMMANDS.includes(arg)
+    ) {
+      args["sessionName"] = arg;
+      posIdx++;
+      continue;
+    }
+
+    // "open" subcommand: next positional arg is url
+    if (
+      args["subcommand"] === "open" &&
       posIdx === 1 &&
       !arg.startsWith("-") &&
       !SUBCOMMANDS.includes(arg)

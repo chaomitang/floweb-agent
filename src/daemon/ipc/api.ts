@@ -10,6 +10,9 @@ export interface DaemonApi {
   closePage(pageId: string): void;
   createSession(url: string): void;
   closeSession(): void;
+  getSessionName(): string;
+  listSessions(): string[];
+  deleteSession(name: string): void;
 }
 
 // ─── Client → Daemon (methods exposed by each client, pushed to) ─────

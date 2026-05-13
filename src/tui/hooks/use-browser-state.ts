@@ -1,11 +1,20 @@
 import { useState, useCallback } from "react";
 import type { PageInfo } from "../../core/types.js";
 
+export interface ChatMessage {
+  role: "user" | "system" | "agent";
+  content: string;
+  timestamp: string;
+}
+
 export interface BrowserState {
   sessionStatus: "disconnected" | "connecting" | "connected" | "error";
   pages: PageInfo[];
   activePageId: string | null;
   message: string;
+  sessionName: string;
+  messages: ChatMessage[];
+  streamingContent: string;
 }
 
 export function useBrowserState() {
@@ -14,10 +23,29 @@ export function useBrowserState() {
     pages: [],
     activePageId: null,
     message: "Ready",
+    sessionName: "default",
+    messages: [
+      {
+        role: "system",
+        content: "Welcome to Flowweb! Type a command or URL to get started.",
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    streamingContent: "",
   });
 
   const setMessage = useCallback((message: string) => {
     setState((prev) => ({ ...prev, message }));
+  }, []);
+
+  const addMessage = useCallback((msg: Omit<ChatMessage, "timestamp">) => {
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        { ...msg, timestamp: new Date().toISOString() },
+      ],
+    }));
   }, []);
 
   const setSessionStatus = useCallback(
@@ -44,6 +72,7 @@ export function useBrowserState() {
     state,
     setState,
     setMessage,
+    addMessage,
     setSessionStatus,
     setPages,
   };

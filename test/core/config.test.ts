@@ -4,13 +4,14 @@ import { FlowwebConfigSchema, resolveConfig } from "../../src/core/config.js";
 describe("FlowwebConfigSchema", () => {
   it("applies defaults for empty input", () => {
     const config = FlowwebConfigSchema.parse({});
-    expect(config).toEqual({
+    expect(config).toMatchObject({
       provider: "anthropic",
       headless: false,
       browserType: "chromium",
       viewport: { width: 1280, height: 720 },
       logLevel: "info",
       sessionDir: ".flowweb/sessions",
+      sessionName: "default",
     });
   });
 

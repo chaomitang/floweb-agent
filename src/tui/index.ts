@@ -7,19 +7,22 @@ export interface StartTuiOptions {
   config?: FlowwebConfig;
   socketPath?: string;
   initialUrl?: string;
+  sessionName?: string;
 }
 
 export function startTui(options?: StartTuiOptions) {
-  const { unmount, waitUntilExit } = render(
+  // Clear screen for a clean start state
+  process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+
+  const { unmount, waitUntilExit, cleanup } = render(
     React.createElement(App, {
       config: options?.config,
       socketPath: options?.socketPath,
       initialUrl: options?.initialUrl,
+      sessionName: options?.sessionName,
     }),
+    { alternateScreen: false },
   );
 
-  return {
-    unmount,
-    waitUntilExit,
-  };
+  return { unmount, waitUntilExit, cleanup };
 }
