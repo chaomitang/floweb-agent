@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Server } from "node:net";
 import { BrowserManager, BrowserManagerEvents } from "../core/browser/manager.js";
-import type { FlowwebConfig } from "../core/config.js";
+import type { FlowebConfig } from "../core/config.js";
 import { getSessionDir } from "../core/config.js";
 import { writeSessionState } from "../core/session-state.js";
 import { listSessions, deleteSessionDir } from "../core/session-manager.js";
-import { appendAction } from "../core/session-logs.js";
+import { appendAction, clearActions } from "../core/session-logs.js";
 import { createIpcSocketServer, listenOnIpcSocket, removeStaleSocketFile } from "./ipc/socket.js";
 import { createIpcPeer } from "./ipc/protocol.js";
 import type { IpcPeer, IpcTransport, IpcProtocolMessage } from "./ipc/protocol.js";
@@ -16,12 +16,13 @@ import type { PageInfo } from "../core/types.js";
 
 export class DaemonServer {
   private browserManager: BrowserManager;
-  private config: FlowwebConfig;
+  private config: FlowebConfig;
   private server: Server | null = null;
   private clients = new Set<IpcPeer<ClientApi>>();
   private sessionId: string;
+  private currentRole: "user" | "agent" = "user";
 
-  constructor(browserManager: BrowserManager, config: FlowwebConfig) {
+  constructor(browserManager: BrowserManager, config: FlowebConfig) {
     this.browserManager = browserManager;
     this.config = config;
     this.sessionId = randomUUID();
@@ -68,7 +69,7 @@ export class DaemonServer {
   }
 
   private handleConnection(transport: IpcTransport<IpcProtocolMessage>): void {
-    const handlers: { [K in keyof DaemonApi]: (...args: Parameters<DaemonApi[K]>) => ReturnType<DaemonApi[K]> } = {
+    const handlers = {
       ping: () => ({ protocolVersion: 1 }),
 
       getPages: () => this.browserManager.getPageInfos(),
@@ -76,19 +77,28 @@ export class DaemonServer {
       getActivePageId: () => this.browserManager.getActivePageId(),
 
       switchToPage: (pageId: string) => {
+        this.logAction("switch_tab", `Switch to ${pageId}`);
         this.browserManager.switchToPage(pageId);
       },
 
       closePage: (pageId: string) => {
+        this.logAction("close_tab", `Close ${pageId}`);
         return this.browserManager.closePage(pageId);
       },
 
       createSession: (url: string) => {
+        this.logAction("navigate", `Open ${url}`);
         return this.browserManager.createSession(this.config, url);
       },
 
       closeSession: () => {
+        this.logAction("close_session", "Session closed");
         return this.browserManager.closeSession();
+      },
+
+      resetSessionData: () => {
+        clearActions(this.sessionDir());
+        this.logAction("reset", "Session data reset");
       },
 
       getSessionName: () => this.config.sessionName,
@@ -99,11 +109,70 @@ export class DaemonServer {
         if (name === this.config.sessionName) {
           throw new Error("Cannot delete the active session");
         }
+        this.logAction("delete_session", `Delete session ${name}`);
         deleteSessionDir(this.config.sessionDir, name);
+      },
+
+      execCode: async (code: string) => {
+        const result = await this.browserManager.execCode(code);
+        const detail = [code.slice(0, 200), result.output || "(no output)", result.diff || ""]
+          .filter(Boolean).join("\n");
+        this.logAction("exec", detail);
+        return result;
+      },
+      snapshotActive: async () => {
+        const result = await this.browserManager.snapshotActive();
+        // renderSnapshot already includes Title + URL, so just use result.text
+        this.logAction("snapshot", result.text);
+        return result;
+      },
+      snapshotDiff: async () => {
+        const result = await this.browserManager.snapshotDiff();
+        this.logAction("snapshot_diff", result.diff || "(no changes)");
+        return result;
+      },
+      evaluate: async (js: string) => {
+        const result = await this.browserManager.evaluate(js);
+        const json = JSON.stringify(result);
+        this.logAction("evaluate", `${js.slice(0, 100)}\n${json.slice(0, 400)}`);
+        return result;
+      },
+      click: (selector: string) => {
+        this.logAction("click", selector);
+        return this.browserManager.click(selector);
+      },
+      typeText: (selector: string, text: string) => {
+        this.logAction("type", `${text} → ${selector}`);
+        return this.browserManager.typeText(selector, text);
+      },
+      pressKey: (key: string) => {
+        this.logAction("press", key);
+        return this.browserManager.pressKey(key);
+      },
+      getSessionMode: () => this.browserManager.getSessionMode(),
+      setSessionMode: (mode: string) => {
+        this.logAction("session_mode", mode);
+        this.browserManager.setSessionMode(mode);
+      },
+      saveProfile: (domain: string) => {
+        this.logAction("save_profile", domain);
+        return this.browserManager.saveProfile(domain).then(() => {
+          // Persist profile to file
+          const profile = this.browserManager.getLastProfile();
+          if (profile) {
+            const profilesDir = join(this.config.sessionDir, this.config.sessionName, "profiles");
+            mkdirSync(profilesDir, { recursive: true });
+            writeFileSync(join(profilesDir, `${domain}.json`), JSON.stringify(profile, null, 2));
+          }
+        });
       },
     };
 
-    const peer = createIpcPeer<ClientApi, DaemonApi>(transport, handlers);
+    const peer = createIpcPeer<ClientApi, DaemonApi>(transport, handlers, {
+      onRequest: (msg) => {
+        this.currentRole = (msg.meta?.role as "user" | "agent") ?? "user";
+      },
+    });
 
     this.clients.add(peer);
 
@@ -120,9 +189,31 @@ export class DaemonServer {
     void peer.call.sessionStatusChanged(status);
   }
 
+  private sessionDir(): string {
+    return getSessionDir(this.config);
+  }
+
+  private logAction(type: string, detail: string): void {
+    const role = this.currentRole;
+    appendAction(this.sessionDir(), {
+      type,
+      timestamp: new Date().toISOString(),
+      data: { detail },
+      role,
+    });
+    // Broadcast to all connected clients for real-time Browser panel display
+    for (const client of this.clients) {
+      try {
+        void client.call.actionLogged({ type, detail, role });
+      } catch {
+        // Client may have disconnected
+      }
+    }
+  }
+
   private persistState(): void {
     try {
-      const sessionDir = getSessionDir(this.config);
+      const sessionDir = this.sessionDir();
       writeSessionState(sessionDir, {
         version: 1 as const,
         sessionId: this.sessionId,
@@ -131,7 +222,6 @@ export class DaemonServer {
         pages: this.browserManager.getPageInfos(),
         activePageId: this.browserManager.getActivePageId(),
         startedAt: new Date().toISOString(),
-        config: this.config,
       });
 
       // Ensure conversations/ subdirectory exists
@@ -139,13 +229,6 @@ export class DaemonServer {
       if (!existsSync(conversationsDir)) {
         mkdirSync(conversationsDir, { recursive: true });
       }
-
-      // Log action to JSONL
-      appendAction(sessionDir, {
-        type: "state_persisted",
-        timestamp: new Date().toISOString(),
-        data: { pageCount: this.browserManager.getPageInfos().length },
-      });
     } catch {
       // Best-effort persistence
     }

@@ -3,23 +3,50 @@ import { useInput } from "ink";
 import { Layout } from "./components/layout.js";
 import type { FocusPanel } from "./components/layout.js";
 import { useBrowserState } from "./hooks/use-browser-state.js";
+import type { ActionLogEntry } from "./hooks/use-browser-state.js";
 import { createCommandExecutor } from "./hooks/use-command-input.js";
 import { useAgent } from "./hooks/use-agent.js";
 import { DaemonClient } from "../daemon/ipc/client.js";
 import { getDaemonSocketPath } from "../daemon/ipc/socket.js";
 import type { ClientApi } from "../daemon/ipc/api.js";
-import type { FlowwebConfig } from "../core/config.js";
-import { getConfigPath } from "../core/config.js";
+import type { FlowebConfig } from "../core/config.js";
+import { getConfigPath, getLogPath } from "../core/config.js";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+function mapDaemonActionType(type: string): ActionLogEntry["type"] | null {
+  switch (type) {
+    case "navigate": return "navigate";
+    case "snapshot": return "snapshot";
+    case "snapshot_diff": return "diff";
+    case "click": return "click";
+    case "type": return "type";
+    case "press": return "press";
+    case "close_tab": case "close_session": return "close";
+    case "switch_tab": return "switch";
+    case "exec": return "exec";
+    case "evaluate": return "evaluate";
+    default: return null;
+  }
+}
+
+const writeLog = (msg: string) => {
+  try {
+    const path = getLogPath();
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* ignore */ }
+};
 
 interface AppProps {
-  config?: FlowwebConfig;
+  config?: FlowebConfig;
   socketPath?: string;
   initialUrl?: string;
   sessionName?: string;
 }
 
 export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
-  const { state, setMessage, setPages, setSessionStatus, setState, addMessage } =
+  const { state, setMessage, setPages, setSessionStatus, setState, addMessage, addAction, setPendingMessage } =
     useBrowserState();
   const agent = useAgent();
   const agentRef = React.useRef(agent);
@@ -29,15 +56,100 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
   const [focusPanel, setFocusPanel] = React.useState<FocusPanel>("chat");
   const pagesRef = React.useRef(state.pages);
   const activePageIdRef = React.useRef(state.activePageId);
+  const pendingRef = React.useRef<string | null>(null);
 
-  const executeCommand = createCommandExecutor(clientRef, setMessage, addMessage, agentRef);
+  const clearSession = React.useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        {
+          role: "system",
+          content: "Session reset.",
+          timestamp: new Date().toISOString(),
+        } as const,
+      ],
+      actionLog: [],
+    }));
+  }, []);
+
+  const executeCommand = createCommandExecutor(clientRef, setMessage, addMessage, agentRef, clearSession);
 
   const handleSubmit = React.useCallback(
-    (text: string) => {
+    async (text: string) => {
+      // If agent is already running, queue as pending
+      const ag = agentRef.current;
+      if (ag?.state.status === "thinking") {
+        pendingRef.current = text;
+        setPendingMessage(text);
+        return;
+      }
+
+      // Show user input immediately, before command result
       addMessage({ role: "user", content: text });
-      executeCommand(text);
+
+      const agentContent = executeCommand(text);
+      if (agentContent === null) return; // fully handled by slash command
+
+      // Stream to agent (agentContent may differ from text for /mode, /spec etc.)
+      setState((prev) => ({ ...prev, streamingContent: "" }));
+
+      if (!ag || !ag.isReady()) {
+        addMessage({ role: "system", content: "Agent not ready." });
+        // Process pending message
+        const pending = pendingRef.current;
+        if (pending) {
+          pendingRef.current = null;
+          setPendingMessage(null);
+          setTimeout(() => handleSubmit(pending), 0);
+        }
+        return;
+      }
+
+      try {
+        let response = "";
+        for await (const event of ag.streamMessage(agentContent)) {
+          switch (event.type) {
+            case "text":
+              response += event.content;
+              setState((prev) => ({ ...prev, streamingContent: response }));
+              break;
+            case "tool_start":
+              addMessage({
+                role: "tool",
+                content: `${event.toolName}(${JSON.stringify(event.toolArgs)})`,
+              });
+              break;
+            case "tool_end": {
+              const truncated =
+                event.result.length > 200
+                  ? event.result.slice(0, 200) + "..."
+                  : event.result;
+              addMessage({ role: "tool", content: `  ${truncated}` });
+              break;
+            }
+            case "error":
+              addMessage({ role: "system", content: event.message });
+              break;
+          }
+        }
+        if (response.trim()) {
+          addMessage({ role: "agent", content: response.trim() });
+        }
+      } catch (err) {
+        addMessage({ role: "system", content: `Error: ${String(err)}` });
+      } finally {
+        setState((prev) => ({ ...prev, streamingContent: "" }));
+      }
+
+      // Process pending message
+      const pending = pendingRef.current;
+      if (pending) {
+        pendingRef.current = null;
+        setPendingMessage(null);
+        setTimeout(() => handleSubmit(pending), 0);
+      }
     },
-    [addMessage, executeCommand],
+    [addMessage, executeCommand, setState, setPendingMessage],
   );
 
   pagesRef.current = state.pages;
@@ -53,14 +165,41 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
     const handlers: ClientApi = {
       pagesChanged(pages, activePageId) {
         if (!mounted) return;
+        const prevPages = pagesRef.current;
         setPages(pages, activePageId);
-        addMessage({
-          role: "system",
-          content: `Pages: ${pages.length} | Active: ${activePageId ?? "none"}`,
-        });
 
         const ag = agentRef.current;
-        if (ag && ag.isReady() && ag.state.mode === "observation" && pages.length > 0) {
+        const isObserving = ag?.state.status === "idle";
+
+        // During observation mode, show page changes as user messages in chat.
+        // Tool events already capture everything in the Browser panel activity log.
+        if (isObserving) {
+          if (pages.length > prevPages.length) {
+            const newPages = pages.filter((p) => !prevPages.find((pp) => pp.id === p.id));
+            for (const np of newPages) {
+              if (np.url && np.url !== "about:blank") {
+                addMessage({ role: "user", content: `Opened ${np.url}` });
+              }
+            }
+          } else if (pages.length < prevPages.length) {
+            const closed = prevPages.filter((p) => !pages.find((pp) => pp.id === p.id));
+            for (const cp of closed) {
+              const label = cp.title && cp.title !== "Loading..." ? cp.title : cp.url;
+              addMessage({ role: "user", content: `Closed ${label}` });
+            }
+          } else {
+            for (const p of pages) {
+              const prev = prevPages.find((pp) => pp.id === p.id);
+              if (prev && prev.title !== p.title && p.title !== "Loading...") {
+                addMessage({ role: "user", content: `Loaded ${p.title?.slice(0, 50)}` });
+              }
+            }
+          }
+        }
+
+        // Only send observation when agent is idle (not in tool-call loop).
+        // Injecting during tool execution breaks the ReAct message chain.
+        if (ag && ag.isReady() && isObserving && pages.length > 0) {
           const snapshot = JSON.stringify({ pages, activePageId });
           if (snapshot === lastPageSnapshotRef.current) return;
           lastPageSnapshotRef.current = snapshot;
@@ -68,11 +207,34 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
           if (observeTimerRef.current) clearTimeout(observeTimerRef.current);
           observeTimerRef.current = setTimeout(async () => {
             if (!mounted) return;
+            // Double-check agent is still idle before sending
+            if (agentRef.current?.state.status !== "idle") return;
             try {
               let response = "";
-              for await (const token of ag.observe({ pages, activePageId })) {
-                response += token;
-                setState((prev) => ({ ...prev, streamingContent: response }));
+              for await (const event of ag.observe({ pages, activePageId })) {
+                switch (event.type) {
+                  case "text":
+                    response += event.content;
+                    setState((prev) => ({ ...prev, streamingContent: response }));
+                    break;
+                  case "tool_start":
+                    addMessage({
+                      role: "tool",
+                      content: `${event.toolName}(${JSON.stringify(event.toolArgs)})`,
+                    });
+                    break;
+                  case "tool_end": {
+                    const truncated =
+                      event.result.length > 200
+                        ? event.result.slice(0, 200) + "..."
+                        : event.result;
+                    addMessage({ role: "tool", content: `  ${truncated}` });
+                    break;
+                  }
+                  case "error":
+                    addMessage({ role: "system", content: event.message });
+                    break;
+                }
               }
               if (response.trim()) {
                 addMessage({ role: "agent", content: response.trim() });
@@ -81,12 +243,19 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
             } catch {
               setState((prev) => ({ ...prev, streamingContent: "" }));
             }
-          }, 1000);
+          }, 1500);
         }
       },
       sessionStatusChanged(status) {
         if (!mounted) return;
         setSessionStatus(status as "disconnected" | "connecting" | "connected" | "error");
+      },
+      actionLogged(action) {
+        if (!mounted) return;
+        const type = mapDaemonActionType(action.type);
+        if (type) {
+          addAction({ type, detail: action.detail, role: action.role });
+        }
       },
     };
 
@@ -129,22 +298,27 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       if (mounted && config) {
         const agentConfig = config.llm;
         try {
-          await agentRef.current.init(client, {
+          const { loadedSkills, availableTools } = await agentRef.current.init(client, {
+            provider: agentConfig.provider,
             model: agentConfig.model,
             apiKey: agentConfig.apiKey,
             baseUrl: agentConfig.baseUrl,
             skillsDir: agentConfig.skillsDir,
             specsDir: agentConfig.specsDir,
-            interactionMode: agentConfig.interactionMode,
+          });
+          // Hook up log handler
+          agentRef.current.setLogHandler((msg: string) => {
+            writeLog(msg);
           });
           addMessage({
             role: "system",
-            content: `Agent ready. ${agentRef.current.state.loadedSkills.length} skills, ${agentRef.current.state.availableTools.length} tools.`,
+            content: `Agent ready. ${loadedSkills.length} skills, ${availableTools.length} tools.`,
           });
+          writeLog(agentRef.current.debugInfo());
         } catch (err) {
           addMessage({
             role: "system",
-            content: `Agent init skipped (no API key?): ${String(err)}`,
+            content: `Agent init failed: ${String(err)}`,
           });
         }
       }
@@ -195,17 +369,23 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
     }
 
     if (key.escape) {
-      process.exit(0);
+      // Priority: cancel pending → interrupt agent → do nothing
+      if (pendingRef.current) {
+        pendingRef.current = null;
+        setPendingMessage(null);
+        return;
+      }
+      const ag = agentRef.current;
+      if (ag?.state.status === "thinking") {
+        ag.cancel();
+        addMessage({ role: "system", content: "Interrupted." });
+        return;
+      }
+      // idle: do nothing (exit via Ctrl+C or /quit)
+      return;
     }
 
     const client = clientRef.current;
-
-    if (key.ctrl && (_input === "t" || _input === "T")) {
-      const newMode = agent.state.mode === "dialogue" ? "observation" : "dialogue";
-      agent.setMode(newMode);
-      addMessage({ role: "system", content: `Mode: ${newMode}` });
-      return;
-    }
 
     if (key.ctrl) {
       const numMatch = _input.match(/^[1-9]$/);
@@ -258,10 +438,11 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       activePageId={state.activePageId}
       messages={state.messages}
       streamingContent={state.streamingContent}
+      pendingMessage={state.pendingMessage}
+      actionLog={state.actionLog}
       focusPanel={focusPanel}
       agentReady={agent.isReady()}
       agentStatus={agent.state.status}
-      agentMode={agent.state.mode}
       agentError={agent.state.error}
       loadedSkills={agent.state.loadedSkills}
       onSwitchPage={(pageId) => {

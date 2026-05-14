@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { FlowwebConfigSchema } from "./config.js";
 import { PageInfoSchema } from "../shared/schemas.js";
 
 const SessionStateSchema = z.object({
@@ -14,7 +13,6 @@ const SessionStateSchema = z.object({
   pages: z.array(PageInfoSchema),
   activePageId: z.string().nullable(),
   startedAt: z.string().datetime({ offset: true }),
-  config: FlowwebConfigSchema,
 });
 
 export type SessionState = z.infer<typeof SessionStateSchema>;

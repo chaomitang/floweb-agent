@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "floweb": {
+      "command": "node",
+      "args": ["dist/cli/index.js", "mcp"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

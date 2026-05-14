@@ -17,7 +17,7 @@ export function createSkillTools(getRegistry: () => SkillRegistry | null) {
     },
     {
       name: "skill_list",
-      description: "List all currently loaded skills.",
+      description: "列出所有当前已加载的技能。",
       schema: z.object({}),
     },
   );
@@ -30,9 +30,9 @@ export function createSkillTools(getRegistry: () => SkillRegistry | null) {
     },
     {
       name: "skill_describe",
-      description: "Get the full content of a loaded skill by name.",
+      description: "按名称获取已加载技能的完整内容。",
       schema: z.object({
-        name: z.string().describe("The skill name to describe"),
+        name: z.string().describe("要查看的技能名称"),
       }),
     },
   );

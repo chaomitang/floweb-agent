@@ -1,4 +1,4 @@
-import type { FlowwebConfig } from "./config.js";
+import type { FlowebConfig } from "./config.js";
 
 export interface PageInfo {
   id: string;
@@ -22,8 +22,8 @@ export interface BrowserSession {
   pid?: number;
 }
 
-export type FlowwebState = {
-  config: FlowwebConfig;
+export type FlowebState = {
+  config: FlowebConfig;
   session: BrowserSession | null;
   message: string;
 };

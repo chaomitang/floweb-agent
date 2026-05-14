@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-export const FlowwebConfigSchema = z.object({
+export const FlowebConfigSchema = z.object({
   provider: z.string().default("anthropic"),
   headless: z.boolean().default(false),
   browserType: z.enum(["chromium", "firefox", "webkit"]).default("chromium"),
@@ -15,45 +15,83 @@ export const FlowwebConfigSchema = z.object({
     })
     .default({ width: 1280, height: 720 }),
   logLevel: z.enum(["info", "warn", "error"]).default("info"),
-  sessionDir: z.string().default(".flowweb/sessions"),
+  sessionDir: z.string().default(".floweb/sessions"),
   sessionName: z.string().default("default"),
-  // LLM / Agent config
   llm: z
     .object({
+      provider: z.enum(["anthropic", "openai"]).default("openai"),
       model: z.string().default("claude-sonnet-4-20250514"),
       apiKey: z.string().optional(),
       baseUrl: z.string().optional(),
-      skillsDir: z.string().default(".claude/skills"),
+      skillsDir: z.string().default(".floweb/skills"),
       specsDir: z.string().default("specs"),
-      interactionMode: z.enum(["dialogue", "observation"]).default("dialogue"),
     })
     .default({
-      model: "claude-sonnet-4-20250514",
-      skillsDir: ".claude/skills",
+      provider: "openai" as const,
+      model: "deepseek-v4-pro",
+      skillsDir: ".floweb/skills",
       specsDir: "specs",
-      interactionMode: "dialogue" as const,
     }),
 });
 
-export type FlowwebConfig = z.infer<typeof FlowwebConfigSchema>;
+export type FlowebConfig = z.infer<typeof FlowebConfigSchema>;
 
-const CONFIG_PATH = join(homedir(), ".flowweb", "config.json");
+const CONFIG_DIR = join(homedir(), ".floweb");
 
-export function loadFileConfig(): Partial<FlowwebConfig> {
+export function getConfigDir(): string {
+  return CONFIG_DIR;
+}
+
+export function getConfigPath(): string {
+  return join(getConfigDir(), "config.json");
+}
+
+export function getGlobalSkillsDir(): string {
+  return join(CONFIG_DIR, "skills");
+}
+
+export function getSourceSkillsDir(): string {
+  const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
+  return join(packageRoot, "skills");
+}
+
+const DEFAULT_CONFIG_JSON = `{
+  "llm": {
+    "provider": "openai",
+    "model": "deepseek-v4-pro",
+    "apiKey": "",
+    "baseUrl": "https://api.deepseek.com/v1"
+  }
+}
+`;
+
+export function initConfig(): string {
+  const dir = getConfigDir();
+  const path = getConfigPath();
+
+  mkdirSync(dir, { recursive: true });
+
+  if (!existsSync(path)) {
+    writeFileSync(path, DEFAULT_CONFIG_JSON, "utf-8");
+  }
+
+  return path;
+}
+
+export function loadFileConfig(): Partial<FlowebConfig> {
   try {
-    if (!existsSync(CONFIG_PATH)) return {};
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const path = getConfigPath();
+    if (!existsSync(path)) return {};
+    const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw);
-    // Validate only known keys, ignore extras
-    return FlowwebConfigSchema.partial().parse(parsed);
+    return FlowebConfigSchema.partial().parse(parsed);
   } catch {
     return {};
   }
 }
 
-export function resolveConfig(input?: Partial<FlowwebConfig>): FlowwebConfig {
+export function resolveConfig(input?: Partial<FlowebConfig>): FlowebConfig {
   const fileConfig = loadFileConfig();
-  // Deep merge: file config as base, input overrides
   const merged: Record<string, unknown> = { ...fileConfig };
   if (input) {
     for (const [key, value] of Object.entries(input)) {
@@ -65,13 +103,13 @@ export function resolveConfig(input?: Partial<FlowwebConfig>): FlowwebConfig {
       }
     }
   }
-  return FlowwebConfigSchema.parse(merged);
+  return FlowebConfigSchema.parse(merged);
 }
 
-export function getConfigPath(): string {
-  return CONFIG_PATH;
-}
-
-export function getSessionDir(config: FlowwebConfig): string {
+export function getSessionDir(config: FlowebConfig): string {
   return join(config.sessionDir, config.sessionName);
+}
+
+export function getLogPath(): string {
+  return join(getConfigDir(), "floweb.log");
 }

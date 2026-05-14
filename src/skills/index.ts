@@ -3,3 +3,4 @@ export type { Skill, SkillMeta, SkillMatch } from "./types.js";
 
 export { loadSkill, loadSkillsFromDir } from "./loader.js";
 export { SkillRegistry } from "./registry.js";
+export { ensureSkillsInstalled } from "./install.js";

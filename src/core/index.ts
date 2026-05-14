@@ -1,7 +1,7 @@
-export { FlowwebConfigSchema, resolveConfig, getSessionDir, loadFileConfig, getConfigPath } from "./config.js";
-export type { FlowwebConfig } from "./config.js";
+export { FlowebConfigSchema, resolveConfig, getSessionDir, loadFileConfig, getConfigPath, getConfigDir, initConfig, getGlobalSkillsDir, getSourceSkillsDir } from "./config.js";
+export type { FlowebConfig } from "./config.js";
 
-export type { PageInfo, BrowserSession, FlowwebState } from "./types.js";
+export type { PageInfo, BrowserSession, FlowebState } from "./types.js";
 
 export { BrowserManager } from "./browser/manager.js";
 
@@ -16,5 +16,5 @@ export {
   deleteSessionDir,
 } from "./session-manager.js";
 
-export { appendAction, readActions } from "./session-logs.js";
+export { appendAction, readActions, clearActions } from "./session-logs.js";
 export type { LogAction } from "./session-logs.js";

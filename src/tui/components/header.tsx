@@ -15,7 +15,7 @@ export function Header({ sessionName }: HeaderProps) {
     >
       <Box justifyContent="center">
         <Text bold color="blue">
-          Flowweb v0.1.0 -- TUI Browser Automation
+          Floweb v0.1.0 -- TUI Browser Automation
         </Text>
       </Box>
       {sessionName && (

@@ -2,9 +2,16 @@ import { useState, useCallback } from "react";
 import type { PageInfo } from "../../core/types.js";
 
 export interface ChatMessage {
-  role: "user" | "system" | "agent";
+  role: "user" | "system" | "agent" | "tool";
   content: string;
   timestamp: string;
+}
+
+export interface ActionLogEntry {
+  type: "navigate" | "snapshot" | "diff" | "click" | "type" | "press" | "close" | "switch" | "observe" | "evaluate" | "exec";
+  detail: string;
+  timestamp: string;
+  role?: "user" | "agent";
 }
 
 export interface BrowserState {
@@ -15,6 +22,8 @@ export interface BrowserState {
   sessionName: string;
   messages: ChatMessage[];
   streamingContent: string;
+  pendingMessage: string | null;
+  actionLog: ActionLogEntry[];
 }
 
 export function useBrowserState() {
@@ -27,11 +36,13 @@ export function useBrowserState() {
     messages: [
       {
         role: "system",
-        content: "Welcome to Flowweb! Type a command or URL to get started.",
+        content: "Welcome to Floweb! Type a command or URL to get started.",
         timestamp: new Date().toISOString(),
       },
     ],
     streamingContent: "",
+    pendingMessage: null,
+    actionLog: [],
   });
 
   const setMessage = useCallback((message: string) => {
@@ -44,6 +55,16 @@ export function useBrowserState() {
       messages: [
         ...prev.messages,
         { ...msg, timestamp: new Date().toISOString() },
+      ],
+    }));
+  }, []);
+
+  const addAction = useCallback((action: Omit<ActionLogEntry, "timestamp">) => {
+    setState((prev) => ({
+      ...prev,
+      actionLog: [
+        ...prev.actionLog.slice(-299),
+        { ...action, timestamp: new Date().toISOString() },
       ],
     }));
   }, []);
@@ -68,12 +89,18 @@ export function useBrowserState() {
     }));
   }, []);
 
+  const setPendingMessage = useCallback((pendingMessage: string | null) => {
+    setState((prev) => ({ ...prev, pendingMessage }));
+  }, []);
+
   return {
     state,
     setState,
     setMessage,
     addMessage,
+    addAction,
     setSessionStatus,
     setPages,
+    setPendingMessage,
   };
 }

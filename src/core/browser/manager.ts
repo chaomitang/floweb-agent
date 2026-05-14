@@ -2,8 +2,12 @@ import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright";
-import type { FlowwebConfig } from "../config.js";
+import type { FlowebConfig } from "../config.js";
 import type { PageInfo } from "../types.js";
+import { captureSnapshot, renderSnapshot } from "./snapshot.js";
+import { diffSnapshots, renderDiff } from "./snapshot-diff.js";
+import { DaemonExecRepl } from "./exec-repl.js";
+import type { PageSnapshot } from "./snapshot.js";
 
 export const BrowserManagerEvents = {
   PAGES_CHANGED: "pagesChanged",
@@ -16,6 +20,9 @@ export class BrowserManager extends EventEmitter {
   private pageById = new Map<string, Page>();
   private pageInfos = new Map<string, PageInfo>();
   private activePageId: string | null = null;
+  private lastSnapshot: PageSnapshot | null = null;
+  private sessionMode: "read-only" | "write-access" = "write-access";
+  private repl = new DaemonExecRepl();
 
   getPageInfos(): PageInfo[] {
     return Array.from(this.pageInfos.values());
@@ -65,13 +72,14 @@ export class BrowserManager extends EventEmitter {
     }
   }
 
-  async createSession(config: FlowwebConfig, url: string): Promise<void> {
+  async createSession(config: FlowebConfig, url: string): Promise<void> {
     if (this.browser) {
       await this.closeSession();
     }
 
-    // Normalize URL: prepend https:// if no protocol
-    if (!/^https?:\/\//i.test(url)) {
+    // Normalize URL: prepend https:// only if no scheme present
+    // Handles about:blank, data: URIs, chrome://, file://, etc.
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) {
       url = `https://${url}`;
     }
 
@@ -89,7 +97,12 @@ export class BrowserManager extends EventEmitter {
 
     const initialPage = await this.context.newPage();
     // registerPage is called automatically via context.on("page")
-    await initialPage.goto(url);
+    try {
+      await initialPage.goto(url, { timeout: 15000 });
+    } catch (err) {
+      await this.closeSession();
+      throw err;
+    }
 
     this.emit(BrowserManagerEvents.STATUS_CHANGED, "connected");
   }
@@ -109,6 +122,131 @@ export class BrowserManager extends EventEmitter {
     }
     this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
     this.emit(BrowserManagerEvents.STATUS_CHANGED, "disconnected");
+  }
+
+  async captureSnapshot(): Promise<PageSnapshot> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    const snap = await captureSnapshot(page);
+    this.lastSnapshot = snap;
+    return snap;
+  }
+
+  async snapshotActive(): Promise<{
+    title: string;
+    url: string;
+    text: string;
+    elements: string;
+  }> {
+    const snap = await this.captureSnapshot();
+    return {
+      title: snap.title,
+      url: snap.url,
+      text: renderSnapshot(snap),
+      elements: `${snap.refs.size} nodes`,
+    };
+  }
+
+  async snapshotDiff(): Promise<{
+    text: string;
+    diff: string;
+  }> {
+    const before = this.lastSnapshot;
+    const after = await this.captureSnapshot();
+    this.lastSnapshot = after;
+
+    const text = renderSnapshot(after);
+
+    if (!before) {
+      return { text, diff: "(first snapshot — no diff)" };
+    }
+
+    const diff = diffSnapshots(before, after);
+    return { text, diff: renderDiff(diff) };
+  }
+
+  async evaluate(js: string): Promise<unknown> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    return page.evaluate(js);
+  }
+
+  async click(selector: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.click(selector, { timeout: 10000 });
+  }
+
+  async typeText(selector: string, text: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.fill(selector, text, { timeout: 10000 });
+  }
+
+  async pressKey(key: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.keyboard.press(key);
+  }
+
+  getSessionMode(): string {
+    return this.sessionMode;
+  }
+
+  setSessionMode(mode: string): void {
+    if (mode !== "read-only" && mode !== "write-access") {
+      throw new Error("Mode must be 'read-only' or 'write-access'");
+    }
+    this.sessionMode = mode;
+  }
+
+  async saveProfile(domain: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    const cookies = await page.context().cookies();
+    const storage = await page.evaluate(() => {
+      const items: Record<string, string> = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) items[key] = localStorage.getItem(key) ?? "";
+      }
+      return items;
+    });
+    const profile = { domain, cookies, localStorage: storage, savedAt: new Date().toISOString() };
+    // Save to a file via a callback? For now just log the data.
+    // The daemon server will handle file writing.
+    (this as any)._lastProfile = profile;
+  }
+
+  getLastProfile(): unknown {
+    return (this as any)._lastProfile ?? null;
+  }
+
+  async execCode(code: string): Promise<{ output: string; result: unknown; diff: string }> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    if (!this.browser || !this.context) throw new Error("Browser not initialized");
+
+    // Snapshot before
+    let beforeSnap: PageSnapshot | null = null;
+    try { beforeSnap = await captureSnapshot(page); } catch { /* ok */ }
+
+    // Run code in persistent REPL
+    this.repl.setPage(page, this.browser, this.context);
+    const { output, result } = await this.repl.run(code);
+
+    // Snapshot after and diff
+    let afterSnap: PageSnapshot | null = null;
+    try { afterSnap = await captureSnapshot(page); } catch { /* ok */ }
+
+    let diff = "";
+    if (beforeSnap && afterSnap) {
+      const entries = diffSnapshots(beforeSnap, afterSnap);
+      diff = renderDiff(entries);
+    }
+
+    this.lastSnapshot = afterSnap;
+    return { output, result, diff };
   }
 
   async dispose(): Promise<void> {
@@ -151,10 +289,8 @@ export class BrowserManager extends EventEmitter {
 
     this.setupPageListeners(page, pageId);
 
-    page.on("popup", (popup) => {
-      // popups are also captured by context.on("page"), but we log them
-      this.registerPage(popup);
-    });
+    // context.on("page") already captures all new pages including popups,
+    // so we don't need a separate page.on("popup") handler.
 
     this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
   }

@@ -1,14 +1,17 @@
 import { z } from "zod";
 
-export type Subcommand = "tui" | "open" | "snapshot" | "pages" | "close" | "daemon";
+export type Subcommand = "tui" | "open" | "snapshot" | "pages" | "close" | "daemon" | "mcp" | "exec" | "run" | "setup";
 
 export const CliArgsSchema = z.object({
   subcommand: z
-    .enum(["tui", "open", "snapshot", "pages", "close", "daemon"])
+    .enum(["tui", "open", "snapshot", "pages", "close", "daemon", "mcp", "exec", "run", "setup"])
     .default("tui"),
   url: z.string().optional(),
+  code: z.string().optional(),
+  file: z.string().optional(),
   sessionName: z.string().optional(),
   socketPath: z.string().optional(),
+  target: z.string().optional(),
   headless: z.boolean().default(false),
   provider: z.string().optional(),
   browserType: z.enum(["chromium", "firefox", "webkit"]).optional(),
@@ -17,7 +20,7 @@ export const CliArgsSchema = z.object({
 
 export type CliArgs = z.infer<typeof CliArgsSchema>;
 
-const SUBCOMMANDS: readonly string[] = ["tui", "open", "snapshot", "pages", "close", "daemon"];
+const SUBCOMMANDS: readonly string[] = ["tui", "open", "snapshot", "pages", "close", "daemon", "mcp", "exec", "run", "setup"];
 
 export function parseCliArgs(rawArgs: string[]): CliArgs {
   const args: Record<string, string | boolean> = {};
@@ -53,6 +56,41 @@ export function parseCliArgs(rawArgs: string[]): CliArgs {
       !SUBCOMMANDS.includes(arg)
     ) {
       args["url"] = arg;
+      posIdx++;
+      continue;
+    }
+
+    // "exec" subcommand: rest of args are code
+    if (
+      args["subcommand"] === "exec" &&
+      posIdx >= 1 &&
+      !arg.startsWith("-")
+    ) {
+      args["code"] = args["code"] ? args["code"] + " " + arg : arg;
+      posIdx++;
+      continue;
+    }
+
+    // "run" subcommand: next positional arg is file
+    if (
+      args["subcommand"] === "run" &&
+      posIdx === 1 &&
+      !arg.startsWith("-") &&
+      !SUBCOMMANDS.includes(arg)
+    ) {
+      args["file"] = arg;
+      posIdx++;
+      continue;
+    }
+
+    // "setup" subcommand: next positional arg is target
+    if (
+      args["subcommand"] === "setup" &&
+      posIdx === 1 &&
+      !arg.startsWith("-") &&
+      !SUBCOMMANDS.includes(arg)
+    ) {
+      args["target"] = arg;
       posIdx++;
       continue;
     }

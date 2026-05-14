@@ -15,10 +15,10 @@ export function createSpecTools(specsDir: string) {
     },
     {
       name: "spec_create",
-      description: "Create a new spec document in the specs directory.",
+      description: "在 specs 目录中创建新的 spec 文档。",
       schema: z.object({
-        name: z.string().describe("The spec file name (e.g., 'add-login-feature')"),
-        content: z.string().describe("The spec markdown content"),
+        name: z.string().describe("spec 文件名（如 'add-login-feature'）"),
+        content: z.string().describe("spec 的 Markdown 内容"),
       }),
     },
   );
@@ -30,9 +30,9 @@ export function createSpecTools(specsDir: string) {
     },
     {
       name: "spec_read",
-      description: "Read a spec document's full content.",
+      description: "读取一个 spec 文档的完整内容。",
       schema: z.object({
-        name: z.string().describe("The spec file name to read"),
+        name: z.string().describe("要读取的 spec 文件名"),
       }),
     },
   );
@@ -45,10 +45,10 @@ export function createSpecTools(specsDir: string) {
     },
     {
       name: "spec_update",
-      description: "Update an existing spec document with new content.",
+      description: "用新内容更新已有的 spec 文档。",
       schema: z.object({
-        name: z.string().describe("The spec file name to update"),
-        content: z.string().describe("The new full spec content"),
+        name: z.string().describe("要更新的 spec 文件名"),
+        content: z.string().describe("新的完整 spec 内容"),
       }),
     },
   );
@@ -66,7 +66,7 @@ export function createSpecTools(specsDir: string) {
     },
     {
       name: "spec_list",
-      description: "List all spec documents in the specs directory.",
+      description: "列出 specs 目录中所有 spec 文档。",
       schema: z.object({}),
     },
   );
@@ -95,10 +95,10 @@ export function createSpecTools(specsDir: string) {
     },
     {
       name: "spec_mark_phase_complete",
-      description: "Mark all success criteria in a spec phase as completed [x].",
+      description: "将 spec 某个阶段的所有成功标准标记为已完成 [x]。",
       schema: z.object({
-        specName: z.string().describe("The spec file name"),
-        phaseTitle: z.string().describe("The phase title to mark complete"),
+        specName: z.string().describe("spec 文件名"),
+        phaseTitle: z.string().describe("要标记完成的阶段标题"),
       }),
     },
   );

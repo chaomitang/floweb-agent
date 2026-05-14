@@ -7,9 +7,7 @@ import { InputBar } from "./input-bar.js";
 import { StatusBar } from "./status-bar.js";
 import { AgentStatus } from "./agent-status.js";
 import type { PageInfo } from "../../core/types.js";
-import type { ChatMessage } from "../hooks/use-browser-state.js";
-import type { InteractionMode } from "../../agent/types.js";
-
+import type { ActionLogEntry, ChatMessage } from "../hooks/use-browser-state.js";
 export type FocusPanel = "chat" | "browser";
 
 interface LayoutProps {
@@ -19,13 +17,14 @@ interface LayoutProps {
   activePageId: string | null;
   messages: ChatMessage[];
   streamingContent?: string;
+  pendingMessage?: string | null;
+  actionLog?: ActionLogEntry[];
   focusPanel: FocusPanel;
   onSubmit: (text: string) => void;
   agentReady: boolean;
   agentStatus: "idle" | "thinking" | "executing" | "error";
-  agentMode: InteractionMode;
   agentError: string | null;
-  loadedSkills: string[];
+  loadedSkills: Array<{ name: string; description: string }>;
   onSwitchPage: (pageId: string) => void;
 }
 
@@ -36,11 +35,12 @@ export function Layout({
   activePageId,
   messages,
   streamingContent,
+  pendingMessage,
+  actionLog,
   focusPanel,
   onSubmit,
   agentReady,
   agentStatus,
-  agentMode,
   agentError,
   loadedSkills,
   onSwitchPage,
@@ -49,7 +49,11 @@ export function Layout({
     <Box flexDirection="column">
       <Header sessionName={sessionName} />
       {focusPanel === "chat" ? (
-        <ChatPanel messages={messages} streamingContent={streamingContent} />
+        <ChatPanel
+          messages={messages}
+          streamingContent={streamingContent}
+          pendingMessage={pendingMessage}
+        />
       ) : (
         <BrowserPanel
           sessionName={sessionName}
@@ -57,15 +61,19 @@ export function Layout({
           pages={pages}
           activePageId={activePageId}
           onSwitchPage={onSwitchPage}
+          actionLog={actionLog}
           isFocused
         />
       )}
       <InputBar onSubmit={onSubmit} />
       <Box flexDirection="row" justifyContent="space-between">
-        <StatusBar focusPanel={focusPanel} />
+        <StatusBar
+          focusPanel={focusPanel}
+          agentStatus={agentStatus}
+          hasPending={pendingMessage != null}
+        />
         <AgentStatus
           status={agentStatus}
-          mode={agentMode}
           error={agentError}
           loadedSkills={loadedSkills}
           ready={agentReady}

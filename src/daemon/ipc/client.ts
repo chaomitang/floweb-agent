@@ -4,7 +4,7 @@ import { connectToIpcSocket, createJsonSocketTransport } from "./socket.js";
 import { createIpcPeer } from "./protocol.js";
 import type { IpcPeer } from "./protocol.js";
 import type { DaemonApi, ClientApi, DaemonReadyMessage } from "./api.js";
-import type { FlowwebConfig } from "../../core/config.js";
+import type { FlowebConfig } from "../../core/config.js";
 
 export type DaemonClientOptions = {
   timeoutMs?: number;
@@ -13,10 +13,36 @@ export type DaemonClientOptions = {
 export class DaemonClient {
   readonly remote: IpcPeer<DaemonApi>["call"];
   private peer: IpcPeer<DaemonApi>;
+  private roleHolder: { role: "user" | "agent" };
+  private timeoutHolder = { ms: 0 };
 
-  private constructor(peer: IpcPeer<DaemonApi>) {
+  private constructor(
+    peer: IpcPeer<DaemonApi>,
+    roleHolder: { role: "user" | "agent" },
+    timeoutHolder: { ms: number },
+  ) {
     this.peer = peer;
     this.remote = peer.call;
+    this.roleHolder = roleHolder;
+    this.timeoutHolder = timeoutHolder;
+  }
+
+  /** Set the role for subsequent IPC calls. Agent tools should set "agent". */
+  setRole(role: "user" | "agent"): void {
+    this.roleHolder.role = role;
+  }
+
+  getRole(): "user" | "agent" {
+    return this.roleHolder.role;
+  }
+
+  /** Set a per-request timeout override (ms). 0 = use default. */
+  setRequestTimeout(ms: number): void {
+    this.timeoutHolder.ms = ms;
+  }
+
+  clearRequestTimeout(): void {
+    this.timeoutHolder.ms = 0;
   }
 
   /**
@@ -30,21 +56,28 @@ export class DaemonClient {
     const socket = await connectToIpcSocket(socketPath);
     const transport = createJsonSocketTransport(socket);
 
+    const roleHolder = { role: "user" as "user" | "agent" };
+    const timeoutHolder = { ms: 0 };
+
     const peer = createIpcPeer<DaemonApi, ClientApi>(transport, handlers, {
       timeoutMs: options?.timeoutMs,
+      getMeta: () => ({
+        role: roleHolder.role,
+        ...(timeoutHolder.ms > 0 ? { timeoutMs: timeoutHolder.ms } : {}),
+      }),
     });
 
     // Verify the connection by pinging the daemon
     await peer.call.ping();
 
-    return new DaemonClient(peer);
+    return new DaemonClient(peer, roleHolder, timeoutHolder);
   }
 
   /**
    * Start a new daemon process via child_process.fork and connect to it.
    */
   static async spawn(
-    config: FlowwebConfig,
+    config: FlowebConfig,
     handlers: ClientApi,
     options?: DaemonClientOptions,
   ): Promise<{ pid: number; socketPath: string; client: DaemonClient }> {

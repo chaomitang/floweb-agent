@@ -123,5 +123,5 @@ export async function removeStaleSocketFile(socketPath: string): Promise<void> {
 
 export function getDaemonSocketPath(): string {
   const uid = userInfo().uid;
-  return `/tmp/flowweb-${uid}.sock`;
+  return `/tmp/floweb-${uid}.sock`;
 }

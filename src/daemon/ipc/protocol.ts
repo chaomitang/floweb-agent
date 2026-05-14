@@ -16,6 +16,7 @@ export type IpcRequestMessage = {
   id: string;
   method: string;
   args: unknown[];
+  meta?: Record<string, unknown>;
 };
 
 export type IpcResponseMessage = {
@@ -130,7 +131,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export function createIpcPeer<Remote, Local>(
   transport: IpcTransport<IpcProtocolMessage>,
   handlers: IpcPeerHandlers<Local>,
-  options?: { timeoutMs?: number },
+  options?: {
+    timeoutMs?: number;
+    getMeta?: () => Record<string, unknown>;
+    onRequest?: (message: IpcRequestMessage) => void;
+  },
 ): IpcPeer<Remote> {
   const pending = new Map<string, PendingRequest>();
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -163,6 +168,7 @@ export function createIpcPeer<Remote, Local>(
     }
 
     if (message.type === "ipc-request") {
+      options?.onRequest?.(message);
       const handler = (handlers as Record<string, (...args: unknown[]) => unknown>)[message.method];
       if (!handler) {
         const response: IpcResponseMessage = {
@@ -217,10 +223,13 @@ export function createIpcPeer<Remote, Local>(
 
           return new Promise((resolve, reject) => {
             const id = `${method}-${randomUUID()}`;
+            const meta = options?.getMeta?.();
+            const reqTimeout = (meta?.timeoutMs as number) ?? timeoutMs;
+
             const timer = setTimeout(() => {
               pending.delete(id);
-              reject(new Error(`IPC request timeout: ${method} (${timeoutMs}ms)`));
-            }, timeoutMs);
+              reject(new Error(`IPC request timeout: ${method} (${reqTimeout}ms)`));
+            }, reqTimeout);
 
             pending.set(id, { resolve, reject, timer });
 
@@ -229,6 +238,7 @@ export function createIpcPeer<Remote, Local>(
               id,
               method,
               args,
+              ...(meta ? { meta } : {}),
             };
 
             void (async () => {

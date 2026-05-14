@@ -1,20 +1,17 @@
 import type { DaemonClient } from "../daemon/ipc/client.js";
 import type { SkillRegistry } from "../skills/registry.js";
 
-export type InteractionMode = "dialogue" | "observation";
-
 export interface AgentConfig {
+  provider: "anthropic" | "openai";
   model: string;
   apiKey?: string;
   baseUrl?: string;
   skillsDir: string;
   specsDir: string;
-  interactionMode: InteractionMode;
 }
 
 export interface AgentState {
   status: "idle" | "thinking" | "executing" | "error";
-  mode: InteractionMode;
   error: string | null;
 }
 
@@ -23,3 +20,9 @@ export interface AgentContext {
   registry: SkillRegistry;
   config: AgentConfig;
 }
+
+export type AgentStreamEvent =
+  | { type: "text"; content: string }
+  | { type: "tool_start"; toolName: string; toolArgs: Record<string, unknown> }
+  | { type: "tool_end"; toolName: string; result: string }
+  | { type: "error"; message: string };

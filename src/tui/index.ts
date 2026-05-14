@@ -1,10 +1,10 @@
 import { render } from "ink";
 import React from "react";
 import { App } from "./app.js";
-import type { FlowwebConfig } from "../core/config.js";
+import type { FlowebConfig } from "../core/config.js";
 
 export interface StartTuiOptions {
-  config?: FlowwebConfig;
+  config?: FlowebConfig;
   socketPath?: string;
   initialUrl?: string;
   sessionName?: string;

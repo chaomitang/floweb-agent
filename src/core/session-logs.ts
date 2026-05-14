@@ -1,10 +1,11 @@
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface LogAction {
   type: string;
   timestamp: string;
   data?: unknown;
+  role?: "user" | "agent";
 }
 
 export function appendAction(sessionDir: string, action: LogAction): void {
@@ -17,6 +18,15 @@ export function appendAction(sessionDir: string, action: LogAction): void {
     appendFileSync(filePath, line, "utf-8");
   } catch {
     // Best-effort logging, silently fail
+  }
+}
+
+export function clearActions(sessionDir: string): void {
+  try {
+    const filePath = join(sessionDir, "actions.jsonl");
+    writeFileSync(filePath, "", "utf-8");
+  } catch {
+    // Best-effort
   }
 }
 

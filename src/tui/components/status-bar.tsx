@@ -4,9 +4,19 @@ import type { FocusPanel } from "./layout.js";
 
 interface StatusBarProps {
   focusPanel?: FocusPanel;
+  agentStatus?: "idle" | "thinking" | "executing" | "error";
+  hasPending?: boolean;
 }
 
-export function StatusBar({ focusPanel }: StatusBarProps) {
+function escHint(agentStatus?: string, hasPending?: boolean): string {
+  if (hasPending) return "Esc: cancel pending";
+  if (agentStatus === "thinking" || agentStatus === "executing") return "Esc: interrupt";
+  return "";
+}
+
+export function StatusBar({ focusPanel, agentStatus, hasPending }: StatusBarProps) {
+  const esc = escHint(agentStatus, hasPending);
+
   return (
     <Box paddingX={1} flexDirection="row">
       <Text dimColor>Tab: {focusPanel === "chat" ? "Browser" : "Chat"}</Text>
@@ -16,10 +26,12 @@ export function StatusBar({ focusPanel }: StatusBarProps) {
       <Text dimColor>Ctrl+[/]: prev/next</Text>
       <Text dimColor> | </Text>
       <Text dimColor>Ctrl+W: close</Text>
-      <Text dimColor> | </Text>
-      <Text dimColor>Ctrl+T: mode</Text>
-      <Text dimColor> | </Text>
-      <Text dimColor>Esc: quit</Text>
+      {esc ? (
+        <>
+          <Text dimColor> | </Text>
+          <Text dimColor>{esc}</Text>
+        </>
+      ) : null}
     </Box>
   );
 }
