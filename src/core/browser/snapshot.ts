@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { compactHTML } from "./compact-html.js";
 
 // ── types ──────────────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ export interface PageSnapshot {
   url: string;
   root: SnapshotNode;
   refs: Map<string, SnapshotNode>;
+  /** Condensed HTML fallback — populated when CDP AXTree is unavailable. */
+  fallbackHTML?: string;
 }
 
 // ── AXTree capture via CDP ─────────────────────────────────────────
@@ -41,12 +44,25 @@ function nextRef(): string {
   return "l" + ++_refCounter;
 }
 
+// Only these roles get short ref IDs (l1, l2, …). StaticText, InlineTextBox,
+// and layout-only generics are excluded — they just add noise.
+const REFS_BY_ROLE = new Set([
+  "button", "link", "textbox", "textfield", "searchbox", "combobox", "listbox",
+  "menuitem", "menuitemcheckbox", "menuitemradio", "option", "radio",
+  "checkbox", "switch", "tab", "slider", "spinbutton",
+  "heading", "image", "list", "listitem",
+  "main", "navigation", "banner", "contentinfo", "form", "search",
+  "article", "section", "region",
+]);
+
 const INTERACTIVE_ROLES = new Set([
   "button", "link", "textbox", "searchbox", "combobox", "listbox",
   "menuitem", "menuitemcheckbox", "menuitemradio", "option", "radio",
   "checkbox", "switch", "tab", "slider", "spinbutton", "text field",
   "generic", "heading", "image", "list", "listitem",
 ]);
+
+const MAX_CHILDREN_PER_PARENT = 4;
 
 function normalizeRole(raw: string): string {
   const r = raw.toLowerCase().replace(/\s+/g, "");
@@ -91,7 +107,7 @@ function buildTree(
     children.length = 0;
   }
 
-  const ref = nextRef();
+  const ref = REFS_BY_ROLE.has(role) ? nextRef() : "";
   const fp = `${role}:${name}:${value}`;
 
   return {
@@ -160,37 +176,58 @@ async function fallbackSnapshot(page: Page): Promise<PageSnapshot> {
   const url = page.url();
   const refs = new Map<string, SnapshotNode>();
 
-  const data: {
-    title: string;
-    url: string;
-    elements: Array<{
-      tag: string;
-      text: string;
-      href?: string;
-      placeholder?: string;
-      type?: string;
-      id?: string;
-    }>;
-  } = await page.evaluate(() => {
-    const interactive = [
-      ...document.querySelectorAll(
-        'a, button, input, textarea, select, [role="button"], [role="link"], [role="textbox"], [role="searchbox"]',
-      ),
-    ];
-    return {
-      title: document.title,
-      url: location.href,
-      elements: interactive.slice(0, 200).map((el) => {
-        const tag = el.tagName.toLowerCase();
-        const text = (el as HTMLElement).innerText?.slice(0, 60) || "";
-        const href = (el as HTMLAnchorElement).href || "";
-        const placeholder = (el as HTMLInputElement).placeholder || "";
-        const type = (el as HTMLInputElement).type || "";
-        const id = (el as HTMLElement).id || "";
-        return { tag, text, href: href || undefined, placeholder: placeholder || undefined, type: type || undefined, id: id || undefined };
-      }),
-    };
-  });
+  // Run basic DOM scan + page content in parallel
+  const [data, rawHTML] = await Promise.all([
+    page.evaluate(() => {
+      const interactive = [
+        ...document.querySelectorAll(
+          'a, button, input, textarea, select, [role="button"], [role="link"], [role="textbox"], [role="searchbox"]',
+        ),
+      ];
+      return {
+        title: document.title,
+        url: location.href,
+        elements: interactive.slice(0, 200).map((el) => {
+          const tag = el.tagName.toLowerCase();
+          const text = (el as HTMLElement).innerText?.slice(0, 60) || "";
+          const href = (el as HTMLAnchorElement).href || "";
+          const placeholder = (el as HTMLInputElement).placeholder || "";
+          const type = (el as HTMLInputElement).type || "";
+          const id = (el as HTMLElement).id || "";
+          return { tag, text, href: href || undefined, placeholder: placeholder || undefined, type: type || undefined, id: id || undefined };
+        }),
+      } as {
+        title: string;
+        url: string;
+        elements: Array<{
+          tag: string;
+          text: string;
+          href?: string;
+          placeholder?: string;
+          type?: string;
+          id?: string;
+        }>;
+      };
+    }),
+    page.content().catch(() => ""),
+  ]);
+
+  // Condense the raw HTML for LLM consumption
+  let fallbackHTML: string | undefined;
+  if (rawHTML) {
+    try {
+      const result = compactHTML(rawHTML);
+      fallbackHTML = [
+        `── Compacted HTML fallback (CDP AXTree unavailable) ──`,
+        `Original: ${result.originalLength} chars → Compacted: ${result.condensedLength} chars`,
+        `Reductions: ${Object.entries(result.reductions).map(([k, v]) => `${k} -${v}`).join(", ")}`,
+        ``,
+        result.html,
+      ].join("\n");
+    } catch {
+      // ignore compactHTML errors
+    }
+  }
 
   const children: SnapshotNode[] = data.elements.map((el) => {
     const ref = nextRef();
@@ -217,7 +254,7 @@ async function fallbackSnapshot(page: Page): Promise<PageSnapshot> {
     fingerprint: `page:${title}`,
   };
 
-  return { title, url, root, refs };
+  return { title, url, root, refs, fallbackHTML };
 }
 
 // ── rendering ──────────────────────────────────────────────────────
@@ -229,33 +266,108 @@ export function renderSnapshot(snap: PageSnapshot): string {
     ``,
   ];
 
-  const renderNode = (node: SnapshotNode, depth: number) => {
-    const indent = "  ".repeat(depth);
-    const name = node.name ? ` "${node.name.slice(0, 80)}"` : "";
-    const ref = ` [${node.ref}]`;
+  renderNodeBody(snap.root, 0, lines);
 
-    if (node.children.length === 0) {
-      if (INTERACTIVE_ROLES.has(node.role)) {
-        const attrs = node.attributes
-          ? " " +
-            Object.entries(node.attributes)
-              .filter(([, v]) => v)
-              .map(([k, v]) => `${k}="${v}"`)
-              .join(" ")
-          : "";
-        lines.push(`${indent}<${node.role}${ref}${attrs}>${name}</${node.role}>`);
-      } else {
-        lines.push(`${indent}<${node.role}${ref}>${name}</${node.role}>`);
-      }
-    } else {
-      lines.push(`${indent}<${node.role}${ref}>${name}`);
-      for (const child of node.children) {
-        renderNode(child, depth + 1);
-      }
-      lines.push(`${indent}</${node.role}>`);
-    }
-  };
+  if (snap.fallbackHTML) {
+    lines.push(``);
+    lines.push(snap.fallbackHTML);
+  }
 
-  renderNode(snap.root, 0);
   return lines.join("\n");
+}
+
+// ── helpers ────────────────────────────────────────────────────────
+
+function renderNodeBody(node: SnapshotNode, depth: number, lines: string[]): void {
+  // Try single-child chain folding first (recursive)
+  const folded = foldableChild(node);
+  if (folded) {
+    renderNodeBody(folded, depth, lines);
+    return;
+  }
+
+  const indent = "  ".repeat(depth);
+  const ref = node.ref ? ` [${node.ref}]` : "";
+  const name = node.name ? ` "${node.name.slice(0, 80)}"` : "";
+
+  if (node.children.length === 0) {
+    if (INTERACTIVE_ROLES.has(node.role) && node.attributes) {
+      const attrs = " " +
+        Object.entries(node.attributes)
+          .filter(([, v]) => v)
+          .map(([k, v]) => `${k}="${v}"`)
+          .join(" ");
+      lines.push(`${indent}<${node.role}${ref}${attrs}>${name}</${node.role}>`);
+    } else {
+      lines.push(`${indent}<${node.role}${ref}>${name}</${node.role}>`);
+    }
+  } else {
+    lines.push(`${indent}<${node.role}${ref}>${name}`);
+    renderChildren(node.children, depth + 1, lines);
+    lines.push(`${indent}</${node.role}>`);
+  }
+}
+
+function renderChildren(
+  children: SnapshotNode[],
+  depth: number,
+  lines: string[],
+): void {
+  // Merge adjacent text-only nodes that share the same name
+  const merged = mergeAdjacentTextNodes(children);
+  const shown = merged.slice(0, MAX_CHILDREN_PER_PARENT);
+  const truncated = merged.slice(MAX_CHILDREN_PER_PARENT);
+
+  for (const child of shown) {
+    renderNodeBody(child, depth, lines);
+  }
+
+  if (truncated.length > 0) {
+    const indent = "  ".repeat(depth);
+    const summary = truncatedChildrenSummary(truncated);
+    lines.push(`${indent}[Truncated ${truncated.length} more element${truncated.length > 1 ? "s" : ""}${summary}]`);
+  }
+}
+
+// If node is a non-semantic wrapper with a single structural child, return the
+// child so renderNodeBody can fold recursively. e.g. div > section > link → link
+function foldableChild(node: SnapshotNode): SnapshotNode | null {
+  if (node.children.length !== 1) return null;
+  const child = node.children[0]!;
+  if (!child) return null;
+  // Keep the current node if it carries a ref (semantically meaningful)
+  if (node.ref) return null;
+  // Don't fold into text-like leaves
+  if (child.role === "statictext" || child.role === "inlinetextbox" || child.role === "text") return null;
+  return child;
+}
+
+function mergeAdjacentTextNodes(nodes: SnapshotNode[]): SnapshotNode[] {
+  const result: SnapshotNode[] = [];
+  for (const node of nodes) {
+    const prev = result[result.length - 1];
+    const isTextLike = node.role === "statictext" || node.role === "inlinetextbox" || node.role === "text";
+    if (
+      prev &&
+      isTextLike &&
+      (prev.role === "statictext" || prev.role === "inlinetextbox" || prev.role === "text") &&
+      prev.name === node.name
+    ) {
+      // Skip duplicate adjacent text with same name
+      continue;
+    }
+    result.push(node);
+  }
+  return result;
+}
+
+function truncatedChildrenSummary(nodes: SnapshotNode[]): string {
+  const interactive = nodes.filter((n) => INTERACTIVE_ROLES.has(n.role) && n.ref);
+  if (interactive.length === 0) return "";
+  const labels = interactive.slice(0, 3).map((n) => {
+    const label = n.name ? n.name.slice(0, 60) : n.role;
+    return `<${n.role} [${n.ref}]> "${label}"`;
+  }).join(", ");
+  const more = interactive.length > 3 ? ", ..." : "";
+  return `. Interactive: ${labels}${more}`;
 }

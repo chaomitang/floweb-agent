@@ -33,6 +33,7 @@ export async function startMcpServer(): Promise<void> {
       pagesChanged() {},
       sessionStatusChanged() {},
       actionLogged() {},
+      observingChanged() {},
     });
   } catch {
     // Spawn daemon if not running
@@ -40,6 +41,7 @@ export async function startMcpServer(): Promise<void> {
       pagesChanged() {},
       sessionStatusChanged() {},
       actionLogged() {},
+      observingChanged() {},
     });
     client = spawned.client;
   }

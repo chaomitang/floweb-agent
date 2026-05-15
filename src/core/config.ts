@@ -19,7 +19,7 @@ export const FlowebConfigSchema = z.object({
   sessionName: z.string().default("default"),
   llm: z
     .object({
-      provider: z.enum(["anthropic", "openai"]).default("openai"),
+      provider: z.enum(["anthropic", "openai", "deepseek"]).default("openai"),
       model: z.string().default("claude-sonnet-4-20250514"),
       apiKey: z.string().optional(),
       baseUrl: z.string().optional(),

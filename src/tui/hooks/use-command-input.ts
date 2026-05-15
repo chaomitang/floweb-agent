@@ -17,6 +17,7 @@ export function createCommandExecutor(
   addMessage: (msg: Omit<ChatMessage, "timestamp">) => void,
   agentRef?: React.RefObject<AgentHook | null>,
   onClear?: () => void,
+  onModeChange?: (observing: boolean) => void,
 ) {
   return useCallback(
     (input: string): string | null => {
@@ -114,9 +115,12 @@ export function createCommandExecutor(
 
         // ── Agent ──
         case "/mode": {
-          return args === "observation"
-            ? "请开始观察我操作浏览器，看到变化就给我反馈"
-            : "请停止观察模式，回到正常对话";
+          if (args === "observation" || args === "observe") {
+            onModeChange?.(true);
+            return "请开始观察我操作浏览器，看到变化就给我反馈";
+          }
+          onModeChange?.(false);
+          return "请停止观察模式，回到正常对话";
         }
 
         case "/skills": {
@@ -139,24 +143,57 @@ export function createCommandExecutor(
           const specTools = tools.filter((t) => t.name.startsWith("spec_"));
           const skillTools = tools.filter((t) => t.name.startsWith("skill_"));
 
+          // Logical groupings within browser tools
+          const browserSections: Array<{ title: string; tools: string[] }> = [
+            { title: "Navigation", tools: ["browser_navigate", "browser_back", "browser_forward", "browser_reload"] },
+            { title: "Page State", tools: ["browser_snapshot", "browser_snapshot_diff", "browser_list_pages"] },
+            { title: "Interaction", tools: ["browser_click", "browser_type", "browser_press", "browser_hover", "browser_scroll", "browser_select", "browser_wait"] },
+            { title: "Tab Management", tools: ["browser_switch_tab", "browser_close_tab", "browser_close_session"] },
+            { title: "Execution", tools: ["browser_evaluate", "browser_exec"] },
+            { title: "Network & Auth", tools: ["browser_intercept", "browser_load_profile", "browser_save_profile"] },
+            { title: "Utilities", tools: ["browser_audit", "browser_screenshot", "browser_set_observing"] },
+          ];
+
           const short: Record<string, string> = {
+            // ── Navigation ──
             browser_navigate: "导航到 URL，自动补全 https://，支持 about:blank",
+            browser_back: "浏览器后退",
+            browser_forward: "浏览器前进",
+            browser_reload: "刷新当前页面",
+            // ── Page State ──
             browser_snapshot: "捕获无障碍树快照，展示可交互元素及 [ref] 标记",
             browser_snapshot_diff: "对比前后快照，显示 +新增/-删除/~修改",
             browser_list_pages: "列出所有标签页及其标题和 URL",
-            browser_switch_tab: "通过页面 ID 切换到指定标签页",
-            browser_close_tab: "通过页面 ID 关闭指定标签页",
-            browser_close_session: "关闭整个浏览器会话",
+            // ── Interaction ──
             browser_click: "点击元素，需 CSS 选择器",
             browser_type: "在输入框中输入文本，需 CSS 选择器",
             browser_press: "按下键盘按键（Enter、Esc、Tab 等）",
+            browser_hover: "鼠标悬停在元素上",
+            browser_scroll: "滚动页面（x/y 像素）",
+            browser_select: "选择下拉框选项",
+            browser_wait: "等待毫秒数或元素出现",
+            // ── Tab Management ──
+            browser_switch_tab: "通过页面 ID 切换到指定标签页",
+            browser_close_tab: "通过页面 ID 关闭指定标签页",
+            browser_close_session: "关闭整个浏览器会话",
+            // ── Execution ──
             browser_evaluate: "在页面执行 JS 并返回 JSON 结果",
             browser_exec: "在共享浏览器 REPL 中执行代码，已注入 page/browser/context",
+            // ── Network & Auth ──
+            browser_intercept: "被动拦截网络请求，捕获 HTTP 响应数据",
+            browser_load_profile: "加载已保存的认证 Profile（cookies + localStorage）",
+            browser_save_profile: "保存当前登录态（cookies + localStorage）",
+            // ── Utilities ──
+            browser_audit: "审计站点反爬策略（反爬服务/fetch 拦截/webdriver 指纹/验证码）",
+            browser_screenshot: "截取当前页面 PNG 截图",
+            browser_set_observing: "切换观察模式",
+            // ── Spec ──
             spec_create: "在 specs 目录创建新的 spec 文档",
             spec_read: "读取 spec 文档完整内容",
             spec_update: "更新已有 spec 文档",
             spec_list: "列出所有 spec 文档",
             spec_mark_phase_complete: "标记 spec 阶段的任务为已完成",
+            // ── Skill ──
             skill_list: "列出所有已加载的技能",
             skill_describe: "按名称获取技能的完整内容",
           };
@@ -175,7 +212,10 @@ export function createCommandExecutor(
           };
 
           const sections: string[] = [];
-          if (browserTools.length) sections.push(makeTable("Browser", browserTools));
+          for (const sec of browserSections) {
+            const items = browserTools.filter((t) => sec.tools.includes(t.name));
+            if (items.length) sections.push(makeTable(sec.title, items));
+          }
           if (specTools.length) sections.push(makeTable("Spec", specTools));
           if (skillTools.length) sections.push(makeTable("Skill", skillTools));
 
@@ -240,6 +280,6 @@ export function createCommandExecutor(
         }
       }
     },
-    [clientRef, setMessage, addMessage, agentRef, onClear],
+    [clientRef, setMessage, addMessage, agentRef, onClear, onModeChange],
   );
 }

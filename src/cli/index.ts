@@ -12,6 +12,7 @@ const noopHandlers: ClientApi = {
   pagesChanged() {},
   sessionStatusChanged() {},
   actionLogged() {},
+  observingChanged() {},
 };
 
 async function execAndPrint(socketPath: string, code: string) {

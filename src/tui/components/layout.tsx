@@ -1,5 +1,5 @@
 import React from "react";
-import { Box } from "ink";
+import { Box, Text } from "ink";
 import { Header } from "./header.js";
 import { ChatPanel } from "./chat-panel.js";
 import { BrowserPanel } from "./browser-panel.js";
@@ -9,6 +9,15 @@ import { AgentStatus } from "./agent-status.js";
 import type { PageInfo } from "../../core/types.js";
 import type { ActionLogEntry, ChatMessage } from "../hooks/use-browser-state.js";
 export type FocusPanel = "chat" | "browser";
+
+function Separator() {
+  const columns = process.stdout.columns ?? 80;
+  return (
+    <Box>
+      <Text dimColor>{"─".repeat(columns)}</Text>
+    </Box>
+  );
+}
 
 interface LayoutProps {
   sessionName: string;
@@ -20,6 +29,7 @@ interface LayoutProps {
   pendingMessage?: string | null;
   actionLog?: ActionLogEntry[];
   focusPanel: FocusPanel;
+  observing: boolean;
   onSubmit: (text: string) => void;
   agentReady: boolean;
   agentStatus: "idle" | "thinking" | "executing" | "error";
@@ -38,6 +48,7 @@ export function Layout({
   pendingMessage,
   actionLog,
   focusPanel,
+  observing,
   onSubmit,
   agentReady,
   agentStatus,
@@ -48,6 +59,7 @@ export function Layout({
   return (
     <Box flexDirection="column">
       <Header sessionName={sessionName} />
+      <Separator />
       {focusPanel === "chat" ? (
         <ChatPanel
           messages={messages}
@@ -74,6 +86,7 @@ export function Layout({
         />
         <AgentStatus
           status={agentStatus}
+          observing={observing}
           error={agentError}
           loadedSkills={loadedSkills}
           ready={agentReady}

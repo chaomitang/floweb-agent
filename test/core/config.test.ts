@@ -1,22 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { FlowwebConfigSchema, resolveConfig } from "../../src/core/config.js";
+import { FlowebConfigSchema, resolveConfig } from "../../src/core/config.js";
 
-describe("FlowwebConfigSchema", () => {
+describe("FlowebConfigSchema", () => {
   it("applies defaults for empty input", () => {
-    const config = FlowwebConfigSchema.parse({});
+    const config = FlowebConfigSchema.parse({});
     expect(config).toMatchObject({
       provider: "anthropic",
       headless: false,
       browserType: "chromium",
       viewport: { width: 1280, height: 720 },
       logLevel: "info",
-      sessionDir: ".flowweb/sessions",
+      sessionDir: ".floweb/sessions",
       sessionName: "default",
     });
   });
 
   it("accepts valid partial config", () => {
-    const config = FlowwebConfigSchema.parse({
+    const config = FlowebConfigSchema.parse({
       headless: true,
       browserType: "firefox",
       viewport: { width: 1920, height: 1080 },

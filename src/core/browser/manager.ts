@@ -7,11 +7,13 @@ import type { PageInfo } from "../types.js";
 import { captureSnapshot, renderSnapshot } from "./snapshot.js";
 import { diffSnapshots, renderDiff } from "./snapshot-diff.js";
 import { DaemonExecRepl } from "./exec-repl.js";
+import { compactHTML } from "./compact-html.js";
 import type { PageSnapshot } from "./snapshot.js";
 
 export const BrowserManagerEvents = {
   PAGES_CHANGED: "pagesChanged",
   STATUS_CHANGED: "statusChanged",
+  USER_ACTION: "userAction",
 } as const;
 
 export class BrowserManager extends EventEmitter {
@@ -21,7 +23,6 @@ export class BrowserManager extends EventEmitter {
   private pageInfos = new Map<string, PageInfo>();
   private activePageId: string | null = null;
   private lastSnapshot: PageSnapshot | null = null;
-  private sessionMode: "read-only" | "write-access" = "write-access";
   private repl = new DaemonExecRepl();
 
   getPageInfos(): PageInfo[] {
@@ -91,6 +92,85 @@ export class BrowserManager extends EventEmitter {
       viewport: config.viewport,
     });
 
+    // Capture user clicks & typing during observation mode
+    await this.context.exposeBinding("__floweb_log", (_source, type: string, detail: string) => {
+      this.emit(BrowserManagerEvents.USER_ACTION, type, detail);
+    });
+    await this.context.addInitScript(() => {
+      const isAgentAction = () => !!(window as any).__floweb_apiActionInProgress;
+
+      // ── Click (debounced, with checkbox handling) ──
+      let clickTimer: ReturnType<typeof setTimeout> | null = null;
+      let pendingClick: string | null = null;
+      document.addEventListener("click", (e) => {
+        if (isAgentAction()) return;
+        const el = e.target as HTMLElement;
+        if (el.tagName === "INPUT" && (el as HTMLInputElement).type === "checkbox") {
+          const id = el.id ? `#${el.id}` : "";
+          const checked = (el as HTMLInputElement).checked;
+          (window as any).__floweb_log(checked ? "check" : "uncheck", `${el.tagName.toLowerCase()}${id}`);
+          return;
+        }
+        const id = el.id ? `#${el.id}` : "";
+        const cls = el.className && typeof el.className === "string" ? `.${el.className.split(" ")[0]}` : "";
+        pendingClick = `${el.tagName.toLowerCase()}${id}${cls}`;
+        if (clickTimer) clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => {
+          if (pendingClick) (window as any).__floweb_log("click", pendingClick);
+          pendingClick = null;
+          clickTimer = null;
+        }, 200);
+      }, { capture: true });
+
+      // ── Input (debounced per element, WeakMap) ──
+      const inputTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+      document.addEventListener("input", (e) => {
+        if (isAgentAction()) return;
+        const el = e.target as HTMLElement;
+        if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT")) return;
+
+        // SELECT fires immediately
+        if (el.tagName === "SELECT") {
+          const id = el.id ? `#${el.id}` : "";
+          (window as any).__floweb_log("type", `select${id} "${(el as HTMLSelectElement).value}"`);
+          return;
+        }
+
+        const prev = inputTimers.get(el);
+        if (prev) clearTimeout(prev);
+        inputTimers.set(el, setTimeout(() => {
+          inputTimers.delete(el);
+          const id = el.id ? `#${el.id}` : "";
+          const val = (el as HTMLInputElement).value?.slice(0, 100) ?? "";
+          (window as any).__floweb_log("type", `${el.tagName.toLowerCase()}${id} "${val}"`);
+        }, 500));
+      }, { capture: true });
+
+      // ── Keydown (special keys + shortcuts only) ──
+      const specialKeys = new Set([
+        "Enter", "Escape", "Tab", "Backspace", "Delete",
+        "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+        "Home", "End", "PageUp", "PageDown",
+      ]);
+      document.addEventListener("keydown", (e) => {
+        if (isAgentAction()) return;
+        const isShortcut = e.ctrlKey || e.metaKey || e.altKey;
+        if (!isShortcut && !specialKeys.has(e.key)) return;
+        const desc = (e.ctrlKey ? "Ctrl+" : "") + (e.metaKey ? "Meta+" : "") + (e.altKey ? "Alt+" : "") + (e.shiftKey ? "Shift+" : "") + e.key;
+        (window as any).__floweb_log("press", desc);
+      }, { capture: true });
+
+      // ── Scroll (debounced) ──
+      let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+      document.addEventListener("scroll", () => {
+        if (isAgentAction()) return;
+        if (scrollTimer) clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+          (window as any).__floweb_log("scroll", `(${Math.round(window.scrollX)}, ${Math.round(window.scrollY)})`);
+        }, 300);
+      }, { capture: true, passive: true });
+    });
+
     this.context.on("page", (page) => {
       this.registerPage(page);
     });
@@ -122,6 +202,61 @@ export class BrowserManager extends EventEmitter {
     }
     this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
     this.emit(BrowserManagerEvents.STATUS_CHANGED, "disconnected");
+  }
+
+  async waitForStable(timeoutMs = 10000): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) return;
+
+    const deadline = Date.now() + timeoutMs;
+
+    // Wait for page load + network idle (Playwright built-in)
+    try {
+      await page.waitForLoadState("load", {
+        timeout: Math.max(0, deadline - Date.now()),
+      });
+      await page.waitForLoadState("networkidle", {
+        timeout: Math.max(0, deadline - Date.now()),
+      });
+    } catch {
+      // timeout is OK — proceed with what we have
+    }
+
+    // Wait for DOM mutations to settle (MutationObserver-based)
+    const remaining = Math.max(0, deadline - Date.now());
+    if (remaining > 500) {
+      try {
+        // Install a MutationObserver that updates a timestamp on every DOM change.
+        // waitForFunction polls this timestamp — when mutations stop for 400ms, done.
+        await page.evaluate(() => {
+          (window as any).__floweb_lastMutation = Date.now();
+          const observer = new MutationObserver(() => {
+            (window as any).__floweb_lastMutation = Date.now();
+          });
+          observer.observe(document.documentElement, {
+            attributes: true,
+            childList: true,
+            characterData: true,
+            subtree: true,
+          });
+          (window as any).__floweb_mutationObserver = observer;
+        });
+        await page.waitForFunction(
+          () => Date.now() - (window as any).__floweb_lastMutation >= 400,
+          { timeout: remaining, polling: 100 },
+        );
+      } catch {
+        // timeout is OK
+      } finally {
+        // Cleanup
+        await page.evaluate(() => {
+          const obs = (window as any).__floweb_mutationObserver;
+          if (obs) { obs.disconnect(); }
+          delete (window as any).__floweb_mutationObserver;
+          delete (window as any).__floweb_lastMutation;
+        }).catch(() => {});
+      }
+    }
   }
 
   async captureSnapshot(): Promise<PageSnapshot> {
@@ -165,6 +300,26 @@ export class BrowserManager extends EventEmitter {
     return { text, diff: renderDiff(diff) };
   }
 
+  async markApiActionInProgress(inProgress: boolean): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) return;
+    await page.evaluate((flag) => {
+      (window as any).__floweb_apiActionInProgress = flag;
+    }, inProgress);
+  }
+
+  async compactHTML(): Promise<{
+    html: string;
+    originalLength: number;
+    condensedLength: number;
+    reductions: Record<string, number>;
+  }> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    const raw = await page.content();
+    return compactHTML(raw);
+  }
+
   async evaluate(js: string): Promise<unknown> {
     const page = this.getActivePage();
     if (!page) throw new Error("No active page");
@@ -189,18 +344,44 @@ export class BrowserManager extends EventEmitter {
     await page.keyboard.press(key);
   }
 
-  getSessionMode(): string {
-    return this.sessionMode;
+  async hover(selector: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.hover(selector);
   }
 
-  setSessionMode(mode: string): void {
-    if (mode !== "read-only" && mode !== "write-access") {
-      throw new Error("Mode must be 'read-only' or 'write-access'");
-    }
-    this.sessionMode = mode;
+  async scroll(x: number, y: number): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
   }
 
-  async saveProfile(domain: string): Promise<void> {
+  async screenshot(): Promise<string> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    const buf = await page.screenshot({ type: "png" });
+    return buf.toString("base64");
+  }
+
+  async goBack(): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.goBack();
+  }
+
+  async goForward(): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.goForward();
+  }
+
+  async reloadPage(): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.reload();
+  }
+
+  async saveProfile(domain: string): Promise<{ domain: string; cookies: Array<{ name: string; value: string; domain: string; path: string }>; localStorage: Record<string, string>; savedAt: string }> {
     const page = this.getActivePage();
     if (!page) throw new Error("No active page");
     const cookies = await page.context().cookies();
@@ -212,14 +393,93 @@ export class BrowserManager extends EventEmitter {
       }
       return items;
     });
-    const profile = { domain, cookies, localStorage: storage, savedAt: new Date().toISOString() };
-    // Save to a file via a callback? For now just log the data.
-    // The daemon server will handle file writing.
-    (this as any)._lastProfile = profile;
+    return { domain, cookies, localStorage: storage, savedAt: new Date().toISOString() };
   }
 
-  getLastProfile(): unknown {
-    return (this as any)._lastProfile ?? null;
+  async loadProfile(profile: { domain: string; cookies: Array<{ name: string; value: string; domain: string; path: string }>; localStorage: Record<string, string> }): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await page.context().addCookies(profile.cookies);
+    await page.evaluate((storage) => {
+      for (const [key, value] of Object.entries(storage)) {
+        localStorage.setItem(key, value);
+      }
+    }, profile.localStorage);
+    await page.reload();
+  }
+
+  private interceptResponses: Array<{ url: string; status: number; body: string }> = [];
+  private interceptHandler: ((response: unknown) => void) | null = null;
+
+  startIntercept(): void {
+    this.interceptResponses = [];
+    const page = this.getActivePage();
+    if (!page) return;
+
+    // Remove previous listener to avoid duplicates
+    if (this.interceptHandler) {
+      page.off("response", this.interceptHandler);
+    }
+
+    const handler = async (resp: { url(): string; status(): number; text(): Promise<string> }) => {
+      try {
+        const body = await resp.text().catch(() => "");
+        this.interceptResponses.push({
+          url: resp.url(),
+          status: resp.status(),
+          body: body.slice(0, 2000),
+        });
+      } catch { /* ignore */ }
+    };
+    this.interceptHandler = handler as (response: unknown) => void;
+    page.on("response", this.interceptHandler);
+  }
+
+  getIntercepted(): Array<{ url: string; status: number; body: string }> {
+    return [...this.interceptResponses];
+  }
+
+  async auditSite(): Promise<string> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    return page.evaluate(() => {
+      const findings: string[] = [];
+
+      // Anti-bot cookies
+      const cookies = document.cookie;
+      const botCookies: Record<string, string> = {
+        _abck: "Akamai Bot Manager",
+        cf_clearance: "Cloudflare",
+        datadome: "DataDome",
+      };
+      for (const [key, label] of Object.entries(botCookies)) {
+        if (cookies.includes(key)) findings.push(`[反爬] ${label} (cookie: ${key})`);
+      }
+      const px = cookies.match(/_px[A-Za-z0-9]*/);
+      if (px) findings.push(`[反爬] PerimeterX/HUMAN (cookie: ${px[0]})`);
+
+      // Fetch/XHR interception
+      try {
+        const fetchStr = window.fetch.toString();
+        if (fetchStr.includes("[native code]")) {
+          findings.push("[网络] fetch: 原生（未拦截）");
+        } else {
+          findings.push("[网络] fetch: 已被 Proxy 包装");
+        }
+      } catch { findings.push("[网络] fetch: 检测失败"); }
+
+      // Challenge page
+      const body = document.body?.innerText ?? "";
+      if (/checking.*browser/i.test(body)) findings.push("[挑战] 检测到 'Checking your browser' 页面");
+      if (/captcha|验证码/i.test(body)) findings.push("[挑战] 检测到 CAPTCHA/验证码");
+      if (/please wait|请等待/i.test(body)) findings.push("[挑战] 检测到 'Please wait' 页面");
+
+      // Navigator checks
+      findings.push(`[指纹] webdriver: ${(navigator as unknown as { webdriver?: unknown }).webdriver ?? "undefined"}`);
+      findings.push(`[指纹] plugins.length: ${(navigator as unknown as { plugins?: { length: number } }).plugins?.length ?? "N/A"}`);
+
+      return findings.join("\n");
+    });
   }
 
   async execCode(code: string): Promise<{ output: string; result: unknown; diff: string }> {

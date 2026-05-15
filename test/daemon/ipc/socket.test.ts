@@ -15,7 +15,7 @@ import {
 import type { IpcProtocolMessage } from "../../../src/daemon/ipc/protocol.js";
 
 function tmpSocketPath(): string {
-  return join(tmpdir(), `flowweb-test-${randomUUID()}.sock`);
+  return join(tmpdir(), `floweb-test-${randomUUID()}.sock`);
 }
 
 describe("createJsonSocketTransport", () => {
@@ -148,9 +148,9 @@ describe("removeStaleSocketFile", () => {
 });
 
 describe("getDaemonSocketPath", () => {
-  it("returns a path in /tmp with flowweb prefix", () => {
+  it("returns a path in /tmp with  prefix", () => {
     const path = getDaemonSocketPath();
-    expect(path).toContain("/tmp/flowweb-");
+    expect(path).toContain("/tmp/floweb-");
     expect(path).toContain(".sock");
   });
 });

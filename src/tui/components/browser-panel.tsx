@@ -32,7 +32,7 @@ function roleColor(role?: string): string | undefined {
 }
 
 function isResult(a: ActionLogEntry): boolean {
-  return a.type === "snapshot" || a.type === "diff" || a.type === "exec" || a.type === "evaluate" || a.type === "observe";
+  return a.type === "snapshot" || a.type === "diff" || a.type === "exec" || a.type === "evaluate" || a.type === "observe" || a.type === "summary";
 }
 
 export function BrowserPanel({
@@ -47,13 +47,7 @@ export function BrowserPanel({
   const actions = actionLog ?? [];
 
   return (
-    <Box
-      borderStyle="round"
-      borderColor={isFocused ? "cyan" : undefined}
-      flexDirection="column"
-      paddingX={1}
-      paddingY={1}
-    >
+    <Box flexDirection="column" paddingX={1} paddingY={1}>
       {/* Row 1: session + tabs */}
       <Box flexDirection="row">
         <Text bold color={isFocused ? "cyan" : undefined}>Browser</Text>
@@ -132,5 +126,8 @@ function actionName(type: ActionLogEntry["type"]): string {
     case "observe":  return "observe";
     case "evaluate": return "evaluate";
     case "exec":     return "exec";
+    case "hover":    return "hover";
+    case "scroll":   return "scroll";
+    case "summary":  return "summary";
   }
 }

@@ -25,7 +25,7 @@ export function ChatPanel({ messages, streamingContent, pendingMessage }: ChatPa
   const chatMessages = messages;
 
   return (
-    <Box borderStyle="round" flexDirection="column" paddingX={1} paddingY={1}>
+    <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Box marginBottom={1}>
         <Text bold>Chat</Text>
         <Text dimColor> ({chatMessages.length})</Text>

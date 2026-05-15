@@ -2,6 +2,7 @@ import { StateGraph, MessagesAnnotation, START, END, MemorySaver } from "@langch
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
+import { ChatDeepSeek } from "@langchain/deepseek";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 import type { DaemonClient } from "../daemon/ipc/client.js";
@@ -13,7 +14,7 @@ import { createSpecTools } from "./tools/spec.tools.js";
 import { createSkillTools } from "./tools/skill.tools.js";
 
 export class AgentRuntime {
-  private model: ChatAnthropic | ChatOpenAI;
+  private model: ChatAnthropic | ChatOpenAI | ChatDeepSeek;
   private tools: StructuredTool[];
   private checkpointer: MemorySaver;
   private app: ReturnType<typeof this.buildGraph>;
@@ -26,13 +27,19 @@ export class AgentRuntime {
     this.config = config;
     this.registry = registry;
     this.client = client;
-    const apiKey =
-      config.apiKey ||
-      (config.provider === "openai"
-        ? process.env.OPENAI_API_KEY
-        : process.env.ANTHROPIC_API_KEY);
+    const apiKey = config.apiKey;
 
-    if (config.provider === "openai") {
+    if (config.provider === "deepseek") {
+      this.model = new ChatDeepSeek({
+        model: config.model,
+        temperature: 0,
+        ...(apiKey ? { apiKey } : {}),
+        ...(config.baseUrl
+          ? { configuration: { baseURL: config.baseUrl } }
+          : {}),
+        modelKwargs: { thinking: { type: "disabled" } },
+      });
+    } else if (config.provider === "openai") {
       this.model = new ChatOpenAI({
         model: config.model,
         temperature: 0,
@@ -40,9 +47,6 @@ export class AgentRuntime {
         ...(config.baseUrl
           ? { configuration: { baseURL: config.baseUrl } }
           : {}),
-        modelKwargs: {
-          thinking: { type: "disabled" as const },
-        } as Record<string, unknown>,
       } as any);
     } else {
       this.model = new ChatAnthropic({
@@ -62,11 +66,7 @@ export class AgentRuntime {
   }
 
   debugInfo(): string {
-    const apiKey =
-      this.config.apiKey ||
-      (this.config.provider === "openai"
-        ? process.env.OPENAI_API_KEY
-        : process.env.ANTHROPIC_API_KEY);
+    const apiKey = this.config.apiKey;
     const masked = apiKey
       ? apiKey.slice(0, 7) + "..." + (apiKey.length > 10 ? apiKey.slice(-4) : "")
       : "(not set)";
@@ -111,13 +111,6 @@ export class AgentRuntime {
         ...state.messages,
       ];
       const response = await modelWithTools.invoke(messages);
-      const r = response as any;
-      if (r.additional_kwargs?.reasoning_content) {
-        delete r.additional_kwargs.reasoning_content;
-      }
-      if (r.reasoning_content) {
-        delete r.reasoning_content;
-      }
       return { messages: [response] };
     };
 
@@ -180,7 +173,7 @@ export class AgentRuntime {
         {
           configurable: { thread_id: threadId },
           streamMode: "messages" as const,
-          recursionLimit: 50,
+          recursionLimit: 100,
           ...(signal ? { signal } : {}),
         },
       );

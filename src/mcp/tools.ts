@@ -11,101 +11,132 @@ export interface McpTool {
   };
 }
 
+type Remote = DaemonClient["remote"];
+
 export function getMcpTools(): McpTool[] {
   return [
+    // ── Navigation ──
     {
       name: "browser_navigate",
       description: "Navigate the browser to a URL. Auto-adds https:// if no protocol specified.",
       inputSchema: {
         type: "object",
-        properties: {
-          url: { type: "string", description: "The URL to navigate to" },
-        },
+        properties: { url: { type: "string", description: "The URL to navigate to" } },
         required: ["url"],
       },
     },
     {
+      name: "browser_back",
+      description: "Navigate the browser back to the previous page.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "browser_forward",
+      description: "Navigate the browser forward to the next page.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "browser_reload",
+      description: "Reload/refresh the current page.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    // ── Page State ──
+    {
       name: "browser_snapshot",
-      description:
-        "Capture an accessibility tree snapshot of the active page. Shows all interactive elements (links, buttons, inputs) with ref IDs, roles, and labels. Use this to understand page structure before clicking or typing.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
+      description: "Capture an accessibility tree snapshot of the active page. Shows all interactive elements (links, buttons, inputs) with ref IDs, roles, and labels.",
+      inputSchema: { type: "object", properties: {} },
     },
     {
       name: "browser_snapshot_diff",
-      description:
-        "Take a new snapshot and diff it against the previous one. Returns +added, -removed, ~modified elements. Use after browser_click, browser_type, or browser_press to verify what changed.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
+      description: "Take a new snapshot and diff it against the previous one. Returns +added, -removed, ~modified elements.",
+      inputSchema: { type: "object", properties: {} },
     },
     {
+      name: "browser_list_pages",
+      description: "List all open browser pages/tabs with their titles and URLs.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    // ── Interaction ──
+    {
       name: "browser_click",
-      description:
-        "Click an element on the active page. Use a CSS selector (e.g. 'button.submit', '#login'). Run browser_snapshot first to find selectors.",
+      description: "Click an element on the active page. Use a CSS selector (e.g. 'button.submit', '#login').",
       inputSchema: {
         type: "object",
-        properties: {
-          selector: { type: "string", description: "CSS selector of the element to click" },
-        },
+        properties: { selector: { type: "string", description: "CSS selector of the element to click" } },
         required: ["selector"],
       },
     },
     {
       name: "browser_type",
-      description:
-        "Type text into an input element. Use a CSS selector (e.g. 'input[name=\"q\"]', '#search'). Run browser_snapshot first to find selectors.",
+      description: "Type text into an input element. Use a CSS selector (e.g. 'input[name=\"q\"]', '#search').",
       inputSchema: {
         type: "object",
         properties: {
           selector: { type: "string", description: "CSS selector of the input element" },
-          text: { type: "string", description: "Text to type" },
+          text: { type: "string", description: "Text to fill" },
         },
         required: ["selector", "text"],
       },
     },
     {
       name: "browser_press",
-      description:
-        "Press a keyboard key. Use key names like 'Enter', 'Escape', 'Tab', 'ArrowDown', etc.",
+      description: "Press a keyboard key. Use key names like 'Enter', 'Escape', 'Tab', 'ArrowDown', etc.",
       inputSchema: {
         type: "object",
-        properties: {
-          key: { type: "string", description: "Key to press" },
-        },
+        properties: { key: { type: "string", description: "Key to press" } },
         required: ["key"],
       },
     },
     {
-      name: "browser_evaluate",
-      description: "Execute JavaScript in the active page and return the result as JSON.",
+      name: "browser_hover",
+      description: "Hover the mouse over an element. Useful for triggering tooltips, dropdown menus, etc.",
       inputSchema: {
         type: "object",
-        properties: {
-          js: { type: "string", description: "JavaScript code to execute" },
-        },
-        required: ["js"],
+        properties: { selector: { type: "string", description: "CSS selector of the element to hover" } },
+        required: ["selector"],
       },
     },
     {
-      name: "browser_list_pages",
-      description: "List all open browser pages/tabs with their titles and URLs.",
+      name: "browser_scroll",
+      description: "Scroll the page by pixel offsets. x=horizontal, y=vertical (positive=down).",
       inputSchema: {
         type: "object",
-        properties: {},
+        properties: {
+          x: { type: "number", description: "Horizontal scroll pixels (default 0)" },
+          y: { type: "number", description: "Vertical scroll pixels (default 0)" },
+        },
       },
     },
+    {
+      name: "browser_select",
+      description: "Select an option in a <select> dropdown element.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector of the select element" },
+          value: { type: "string", description: "Option value to select" },
+        },
+        required: ["selector", "value"],
+      },
+    },
+    {
+      name: "browser_wait",
+      description: "Wait for a specified number of milliseconds, or wait for a CSS selector to appear in the DOM.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ms: { type: "number", description: "Milliseconds to wait (default 1000)" },
+          selector: { type: "string", description: "Wait for this CSS selector to appear" },
+        },
+      },
+    },
+    // ── Tab Management ──
     {
       name: "browser_switch_tab",
       description: "Switch to a different browser tab by its page ID.",
       inputSchema: {
         type: "object",
-        properties: {
-          page_id: { type: "string", description: "Page ID to switch to" },
-        },
+        properties: { page_id: { type: "string", description: "Page ID to switch to" } },
         required: ["page_id"],
       },
     },
@@ -114,43 +145,93 @@ export function getMcpTools(): McpTool[] {
       description: "Close a browser tab by its page ID.",
       inputSchema: {
         type: "object",
-        properties: {
-          page_id: { type: "string", description: "Page ID to close" },
-        },
+        properties: { page_id: { type: "string", description: "Page ID to close" } },
         required: ["page_id"],
-      },
-    },
-    {
-      name: "browser_exec",
-      description:
-        "Execute TypeScript/JavaScript code in a persistent REPL within the browser context. Has access to `page`, `browser`, and `context` (Playwright objects). Use `console.log()` to print output. After execution, snapshots before/after are diffed automatically. Use this for complex multi-step interactions or to query page state with custom JS.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          code: { type: "string", description: "TypeScript/JavaScript code to execute in the browser REPL" },
-        },
-        required: ["code"],
       },
     },
     {
       name: "browser_close_session",
       description: "Close the entire browser session and all tabs.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    // ── Execution ──
+    {
+      name: "browser_evaluate",
+      description: "Execute JavaScript in the active page and return the result as JSON.",
       inputSchema: {
         type: "object",
-        properties: {},
+        properties: { js: { type: "string", description: "JavaScript code to execute" } },
+        required: ["js"],
+      },
+    },
+    {
+      name: "browser_exec",
+      description: "Execute TypeScript/JavaScript code in a persistent REPL within the browser context. Has access to `page`, `browser`, `context` (Playwright objects).",
+      inputSchema: {
+        type: "object",
+        properties: { code: { type: "string", description: "TypeScript/JavaScript code to execute" } },
+        required: ["code"],
+      },
+    },
+    // ── Network & Auth ──
+    {
+      name: "browser_intercept",
+      description: "Start passive network interception, listening for HTTP responses. Waits for the specified seconds and returns intercepted data. Useful for anti-crawler data capture.",
+      inputSchema: {
+        type: "object",
+        properties: { timeout: { type: "number", description: "Seconds to wait (default 5)" } },
+      },
+    },
+    {
+      name: "browser_load_profile",
+      description: "Load a previously saved authentication profile (cookies + localStorage) for a domain and refresh the page.",
+      inputSchema: {
+        type: "object",
+        properties: { domain: { type: "string", description: "Domain name, e.g. example.com" } },
+        required: ["domain"],
+      },
+    },
+    {
+      name: "browser_save_profile",
+      description: "Save the current authentication state (cookies + localStorage) for a domain to reuse later.",
+      inputSchema: {
+        type: "object",
+        properties: { domain: { type: "string", description: "Domain name, e.g. example.com" } },
+        required: ["domain"],
+      },
+    },
+    // ── Utilities ──
+    {
+      name: "browser_audit",
+      description: "Audit the current page for anti-bot services (Akamai/Cloudflare/DataDome/PerimeterX), fetch interception, webdriver fingerprint, and CAPTCHAs.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "browser_screenshot",
+      description: "Take a PNG screenshot of the current page and return it as a base64-encoded string.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "browser_set_observing",
+      description: "Toggle observation mode. Set true to enter (user is manually operating the browser), false to exit.",
+      inputSchema: {
+        type: "object",
+        properties: { observing: { type: "boolean", description: "true to enter observation mode, false to exit" } },
+        required: ["observing"],
       },
     },
   ];
 }
 
 export async function callTool(
-  remote: any,
+  remote: Remote,
   name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   let text: string;
 
   switch (name) {
+    // ── Navigation ──
     case "browser_navigate": {
       const url = args.url as string;
       const normalized = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)
@@ -160,41 +241,27 @@ export async function callTool(
       text = `Opened ${normalized}`;
       break;
     }
+    case "browser_back":
+      await remote.goBack();
+      text = "Navigated back";
+      break;
+    case "browser_forward":
+      await remote.goForward();
+      text = "Navigated forward";
+      break;
+    case "browser_reload":
+      await remote.reloadPage();
+      text = "Page reloaded";
+      break;
+    // ── Page State ──
     case "browser_snapshot": {
       const snap = await remote.snapshotActive();
       text = snap.text;
       break;
     }
-    case "browser_exec": {
-      const result = await remote.execCode(args.code as string);
-      text = [result.output, result.result !== undefined ? `=> ${result.result}` : "", result.diff ? `\n--- Diff ---\n${result.diff}` : ""]
-        .filter(Boolean)
-        .join("\n");
-      break;
-    }
     case "browser_snapshot_diff": {
       const result = await remote.snapshotDiff();
       text = result.diff;
-      break;
-    }
-    case "browser_click": {
-      await remote.click(args.selector as string);
-      text = `Clicked "${args.selector}"`;
-      break;
-    }
-    case "browser_type": {
-      await remote.typeText(args.selector as string, args.text as string);
-      text = `Typed "${args.text}" into "${args.selector}"`;
-      break;
-    }
-    case "browser_press": {
-      await remote.pressKey(args.key as string);
-      text = `Pressed "${args.key}"`;
-      break;
-    }
-    case "browser_evaluate": {
-      const result = await remote.evaluate(args.js as string);
-      text = JSON.stringify(result, null, 2);
       break;
     }
     case "browser_list_pages": {
@@ -204,26 +271,113 @@ export async function callTool(
         text = "No pages open.";
       } else {
         text = pages
-          .map((p: any) => `${p.id === activeId ? "▶" : " "} [${p.id}] ${p.title || "Untitled"} — ${p.url}`)
+          .map((p) => `${p.id === activeId ? "▶" : " "} [${p.id}] ${p.title || "Untitled"} — ${p.url}`)
           .join("\n");
       }
       break;
     }
-    case "browser_switch_tab": {
+    // ── Interaction ──
+    case "browser_click":
+      await remote.click(args.selector as string);
+      text = `Clicked "${args.selector}"`;
+      break;
+    case "browser_type":
+      await remote.typeText(args.selector as string, args.text as string);
+      text = `Typed "${args.text}" into "${args.selector}"`;
+      break;
+    case "browser_press":
+      await remote.pressKey(args.key as string);
+      text = `Pressed "${args.key}"`;
+      break;
+    case "browser_hover":
+      await remote.hover(args.selector as string);
+      text = `Hovered "${args.selector}"`;
+      break;
+    case "browser_scroll":
+      await remote.scroll((args.x as number) ?? 0, (args.y as number) ?? 0);
+      text = `Scrolled (${args.x ?? 0}, ${args.y ?? 0})`;
+      break;
+    case "browser_select": {
+      const selValue = args.value as string;
+      await remote.evaluate(
+        `(async () => { const el = document.querySelector(${JSON.stringify(args.selector)}); el.value = ${JSON.stringify(selValue)}; el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
+      );
+      text = `Selected "${selValue}" in ${args.selector}`;
+      break;
+    }
+    case "browser_wait":
+      if (args.selector) {
+        await remote.evaluate(
+          `new Promise(r => { const s = ${JSON.stringify(args.selector)}; const el = document.querySelector(s); if (el) r('found'); else new MutationObserver((_, obs) => { if (document.querySelector(s)) { obs.disconnect(); r('found'); } }).observe(document, { childList: true, subtree: true }); })`,
+        );
+        text = `Element "${args.selector}" appeared`;
+      } else {
+        await new Promise((r) => setTimeout(r, (args.ms as number) ?? 1000));
+        text = `Waited ${args.ms ?? 1000}ms`;
+      }
+      break;
+    // ── Tab Management ──
+    case "browser_switch_tab":
       await remote.switchToPage(args.page_id as string);
       text = `Switched to page ${args.page_id}`;
       break;
-    }
-    case "browser_close_tab": {
+    case "browser_close_tab":
       await remote.closePage(args.page_id as string);
       text = `Closed page ${args.page_id}`;
       break;
-    }
-    case "browser_close_session": {
+    case "browser_close_session":
       await remote.closeSession();
       text = "Browser session closed.";
       break;
+    // ── Execution ──
+    case "browser_evaluate": {
+      const result = await remote.evaluate(args.js as string);
+      text = JSON.stringify(result, null, 2);
+      break;
     }
+    case "browser_exec": {
+      const result = await remote.execCode(args.code as string);
+      text = [result.output, result.result !== undefined ? `=> ${result.result}` : "", result.diff ? `\n--- Diff ---\n${result.diff}` : ""]
+        .filter(Boolean)
+        .join("\n");
+      break;
+    }
+    // ── Network & Auth ──
+    case "browser_intercept": {
+      const timeout = (args.timeout as number) ?? 5;
+      await remote.startIntercept();
+      await new Promise((r) => setTimeout(r, timeout * 1000));
+      const responses = await remote.getIntercepted();
+      if (responses.length === 0) {
+        text = "No requests intercepted";
+      } else {
+        text = responses
+          .map((r) => `[${r.status}] ${r.url}\n${r.body.slice(0, 200)}`)
+          .join("\n\n---\n\n");
+      }
+      break;
+    }
+    case "browser_load_profile":
+      await remote.loadProfile(args.domain as string);
+      text = `Loaded profile for ${args.domain}, page refreshed`;
+      break;
+    case "browser_save_profile":
+      await remote.saveProfile(args.domain as string);
+      text = `Saved profile for ${args.domain} (cookies + localStorage)`;
+      break;
+    // ── Utilities ──
+    case "browser_audit":
+      text = await remote.auditSite();
+      break;
+    case "browser_screenshot": {
+      const b64 = await remote.screenshot();
+      text = `Screenshot (base64, ${b64.length} chars)`;
+      break;
+    }
+    case "browser_set_observing":
+      await remote.setObservingMode(args.observing as boolean);
+      text = (args.observing as boolean) ? "Observation mode enabled" : "Observation mode disabled";
+      break;
     default:
       text = `Unknown tool: ${name}`;
   }

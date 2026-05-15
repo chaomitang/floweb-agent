@@ -20,12 +20,6 @@ export function StatusBar({ focusPanel, agentStatus, hasPending }: StatusBarProp
   return (
     <Box paddingX={1} flexDirection="row">
       <Text dimColor>Tab: {focusPanel === "chat" ? "Browser" : "Chat"}</Text>
-      <Text dimColor> | </Text>
-      <Text dimColor>Ctrl+1-9: tab</Text>
-      <Text dimColor> | </Text>
-      <Text dimColor>Ctrl+[/]: prev/next</Text>
-      <Text dimColor> | </Text>
-      <Text dimColor>Ctrl+W: close</Text>
       {esc ? (
         <>
           <Text dimColor> | </Text>

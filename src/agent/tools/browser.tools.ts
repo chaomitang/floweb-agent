@@ -188,18 +188,238 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     },
   );
 
+  const loadProfile = tool(
+    async ({ domain }: { domain: string }) => {
+      await client().remote.loadProfile(domain);
+      return `已加载 ${domain} 的登录态，页面已刷新`;
+    },
+    {
+      name: "browser_load_profile",
+      description: "加载之前保存的认证 Profile（cookies + localStorage），恢复登录态。加载后自动刷新页面。",
+      schema: z.object({ domain: z.string().describe("域名，如 example.com") }),
+    },
+  );
+
+  const intercept = tool(
+    async ({ timeout }: { timeout?: number }) => {
+      const ms = (timeout ?? 5) * 1000;
+      await client().remote.startIntercept();
+      await new Promise((r) => setTimeout(r, ms));
+      const responses = await client().remote.getIntercepted();
+      if (responses.length === 0) return "未拦截到网络请求";
+      return responses
+        .map((r) => `[${r.status}] ${r.url}\n${r.body.slice(0, 200)}`)
+        .join("\n\n---\n\n");
+    },
+    {
+      name: "browser_intercept",
+      description: "启动被动网络拦截，监听浏览器发出的所有 HTTP 响应。等待指定秒数后返回拦截到的数据。用于反爬场景的数据捕获。",
+      schema: z.object({ timeout: z.number().optional().describe("等待秒数，默认 5 秒") }),
+    },
+  );
+
+  const auditSite = tool(
+    async () => {
+      return await client().remote.auditSite();
+    },
+    {
+      name: "browser_audit",
+      description: "对当前页面进行安全审计，检测反爬服务（Akamai/Cloudflare/DataDome/PerimeterX）、fetch 拦截、webdriver 指纹、验证码等。",
+      schema: z.object({}),
+    },
+  );
+
+  const hover = tool(
+    async ({ selector }: { selector: string }) => {
+      await client().remote.hover(selector);
+      return `Hovered "${selector}"`;
+    },
+    {
+      name: "browser_hover",
+      description: "将鼠标悬停在指定元素上。用于触发 tooltip、下拉菜单等。",
+      schema: z.object({ selector: z.string().describe("CSS 选择器") }),
+    },
+  );
+
+  const scroll = tool(
+    async ({ x, y }: { x: number; y: number }) => {
+      await client().remote.scroll(x, y);
+      return `Scrolled (${x}, ${y})`;
+    },
+    {
+      name: "browser_scroll",
+      description: "滚动页面。x=水平像素，y=垂直像素（正数向下）。如 scroll(0, 500) 向下滚动 500px。",
+      schema: z.object({
+        x: z.number().default(0).describe("水平滚动像素"),
+        y: z.number().default(0).describe("垂直滚动像素"),
+      }),
+    },
+  );
+
+  const screenshot = tool(
+    async () => {
+      const b64 = await client().remote.screenshot();
+      return `Screenshot (base64, ${b64.length} chars)`;
+    },
+    {
+      name: "browser_screenshot",
+      description: "截取当前页面的 PNG 截图，返回 base64 编码。",
+      schema: z.object({}),
+    },
+  );
+
+  const goBack = tool(
+    async () => {
+      await client().remote.goBack();
+      return "Navigated back";
+    },
+    {
+      name: "browser_back",
+      description: "浏览器后退到上一页。",
+      schema: z.object({}),
+    },
+  );
+
+  const goForward = tool(
+    async () => {
+      await client().remote.goForward();
+      return "Navigated forward";
+    },
+    {
+      name: "browser_forward",
+      description: "浏览器前进到下一页。",
+      schema: z.object({}),
+    },
+  );
+
+  const reload = tool(
+    async () => {
+      await client().remote.reloadPage();
+      return "Page reloaded";
+    },
+    {
+      name: "browser_reload",
+      description: "刷新当前页面。",
+      schema: z.object({}),
+    },
+  );
+
+  const saveProfile = tool(
+    async ({ domain }: { domain: string }) => {
+      await client().remote.saveProfile(domain);
+      return `已保存 ${domain} 的登录态（cookies + localStorage）`;
+    },
+    {
+      name: "browser_save_profile",
+      description: "保存当前页面的认证状态（cookies + localStorage），用于后续复用登录态。",
+      schema: z.object({ domain: z.string().describe("域名，如 example.com") }),
+    },
+  );
+
+  const wait = tool(
+    async ({ ms, selector }: { ms?: number; selector?: string }) => {
+      if (selector) {
+        await client().remote.evaluate(
+          `new Promise(r => { const el = document.querySelector(${JSON.stringify(selector)}); if (el) r('found'); else new MutationObserver((_, obs) => { if (document.querySelector(${JSON.stringify(selector)})) { obs.disconnect(); r('found'); } }).observe(document, { childList: true, subtree: true }); })`,
+        );
+        return `Element "${selector}" appeared`;
+      }
+      const timeout = ms ?? 1000;
+      await new Promise((r) => setTimeout(r, timeout));
+      return `Waited ${timeout}ms`;
+    },
+    {
+      name: "browser_wait",
+      description: "等待指定毫秒数，或等待某个 CSS 选择器出现在 DOM 中。",
+      schema: z.object({
+        ms: z.number().optional().describe("等待毫秒数，默认 1000"),
+        selector: z.string().optional().describe("等待此 CSS 选择器出现在页面上"),
+      }),
+    },
+  );
+
+  const selectOption = tool(
+    async ({ selector, value }: { selector: string; value: string }) => {
+      await client().remote.evaluate(
+        `(async () => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Not found'); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
+      );
+      return `Selected "${value}" in ${selector}`;
+    },
+    {
+      name: "browser_select",
+      description: "选择下拉框（<select>）中的选项。",
+      schema: z.object({
+        selector: z.string().describe("select 元素的 CSS 选择器"),
+        value: z.string().describe("选项的 value"),
+      }),
+    },
+  );
+
+  const compactHTML = tool(
+    async () => {
+      const result = await client().remote.compactHTML();
+      return [
+        `Compacted HTML: ${result.condensedLength} chars (was ${result.originalLength}, ${Object.entries(result.reductions).map(([k, v]) => `${k} -${v}`).join(", ")})`,
+        "",
+        result.html,
+      ].join("\n");
+    },
+    {
+      name: "browser_compact_html",
+      description:
+        "获取当前页面的紧凑 HTML。去除 <script>/<style> 内容、HTML 注释、base64 数据、非语义 CSS 类名、框架属性等，只保留语义结构和交互元素。适合 LLM 分析页面结构时使用，比完整 HTML 节省 70-90% token。",
+      schema: z.object({}),
+    },
+  );
+
+  const setObserving = tool(
+    async ({ observing }: { observing: boolean }) => {
+      await client().remote.setObservingMode(observing);
+      return observing ? "观察模式已开启" : "观察模式已关闭";
+    },
+    {
+      name: "browser_set_observing",
+      description:
+        "进入或退出观察模式。当用户说\"watch\"、\"observe\"、\"观察\"、\"帮我看着\"、\"看我操作\"等表达了观察意图时，你必须立即调用 setObserving(true)，不能只口头回复。进入观察模式后，页面变化会以 [Observation] 消息推送给你，你只需对变化做出反馈即可。当用户说\"好了\"、\"完成\"、\"done\"、\"分析一下\"、\"总结\"等表示操作完成时，调用 setObserving(false) 退出观察模式，并给出总结。进入观察模式后用户可能继续和你聊天，保持观察状态不要退出。",
+      schema: z.object({
+        observing: z.boolean().describe("true=进入观察模式（用户操作时静默观察并反馈），false=退出观察模式（回到正常对话模式）"),
+      }),
+    },
+  );
+
   return [
+    // ── Navigation ──
     navigate,
+    goBack,
+    goForward,
+    reload,
+    // ── Page State ──
     snapshot,
     snapshotDiff,
     listPages,
-    switchTab,
-    closeTab,
-    closeSession,
+    // ── Interaction ──
     click,
     typeText,
     pressKey,
+    hover,
+    scroll,
+    selectOption,
+    wait,
+    // ── Tab Management ──
+    switchTab,
+    closeTab,
+    closeSession,
+    // ── Execution ──
     evaluate,
     exec,
+    // ── Network & Auth ──
+    intercept,
+    loadProfile,
+    saveProfile,
+    // ── Utilities ──
+    auditSite,
+    screenshot,
+    compactHTML,
+    setObserving,
   ];
 }

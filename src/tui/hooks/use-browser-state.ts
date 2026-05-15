@@ -8,7 +8,7 @@ export interface ChatMessage {
 }
 
 export interface ActionLogEntry {
-  type: "navigate" | "snapshot" | "diff" | "click" | "type" | "press" | "close" | "switch" | "observe" | "evaluate" | "exec";
+  type: "navigate" | "snapshot" | "diff" | "click" | "type" | "press" | "close" | "switch" | "observe" | "evaluate" | "exec" | "hover" | "scroll" | "summary";
   detail: string;
   timestamp: string;
   role?: "user" | "agent";

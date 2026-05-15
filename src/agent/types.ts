@@ -2,7 +2,7 @@ import type { DaemonClient } from "../daemon/ipc/client.js";
 import type { SkillRegistry } from "../skills/registry.js";
 
 export interface AgentConfig {
-  provider: "anthropic" | "openai";
+  provider: "anthropic" | "openai" | "deepseek";
   model: string;
   apiKey?: string;
   baseUrl?: string;

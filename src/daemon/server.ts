@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Server } from "node:net";
 import { BrowserManager, BrowserManagerEvents } from "../core/browser/manager.js";
@@ -21,6 +22,7 @@ export class DaemonServer {
   private clients = new Set<IpcPeer<ClientApi>>();
   private sessionId: string;
   private currentRole: "user" | "agent" = "user";
+  private observing = false;
 
   constructor(browserManager: BrowserManager, config: FlowebConfig) {
     this.browserManager = browserManager;
@@ -53,6 +55,17 @@ export class DaemonServer {
             // Client may have disconnected
           }
         }
+      },
+    );
+
+    // Log user manual interactions (click, type) during observation
+    this.browserManager.on(
+      BrowserManagerEvents.USER_ACTION,
+      (type: string, detail: string) => {
+        const prev = this.currentRole;
+        this.currentRole = "user";
+        this.logAction(type, detail);
+        this.currentRole = prev;
       },
     );
   }
@@ -101,6 +114,45 @@ export class DaemonServer {
         this.logAction("reset", "Session data reset");
       },
 
+      recordAction: (type: string, detail: string) => {
+        // Explicit user action — force role to "user"
+        const prev = this.currentRole;
+        this.currentRole = "user";
+        this.logAction(type, detail);
+        this.currentRole = prev;
+      },
+
+      setObservingMode: (observing: boolean) => {
+        this.observing = observing;
+        for (const client of this.clients) {
+          try {
+            void client.call.observingChanged(observing);
+          } catch { /* */ }
+        }
+      },
+
+      getObservingMode: () => this.observing,
+
+      loadProfile: async (domain: string) => {
+        const profilesDir = join(this.config.sessionDir, this.config.sessionName, "profiles");
+        const path = join(profilesDir, `${domain}.json`);
+        const raw = await readFile(path, "utf-8");
+        const profile = JSON.parse(raw);
+        return this.browserManager.loadProfile(profile);
+      },
+
+      startIntercept: () => {
+        this.browserManager.startIntercept();
+      },
+
+      getIntercepted: () => {
+        return this.browserManager.getIntercepted();
+      },
+
+      auditSite: () => {
+        return this.browserManager.auditSite();
+      },
+
       getSessionName: () => this.config.sessionName,
 
       listSessions: () => listSessions(this.config.sessionDir),
@@ -113,8 +165,11 @@ export class DaemonServer {
         deleteSessionDir(this.config.sessionDir, name);
       },
 
+      compactHTML: () => {
+        return this.browserManager.compactHTML();
+      },
       execCode: async (code: string) => {
-        const result = await this.browserManager.execCode(code);
+        const result = await this.guard(() => this.browserManager.execCode(code));
         const detail = [code.slice(0, 200), result.output || "(no output)", result.diff || ""]
           .filter(Boolean).join("\n");
         this.logAction("exec", detail);
@@ -126,44 +181,62 @@ export class DaemonServer {
         this.logAction("snapshot", result.text);
         return result;
       },
+      waitForPageStable: (timeoutMs?: number) => {
+        return this.browserManager.waitForStable(timeoutMs);
+      },
       snapshotDiff: async () => {
         const result = await this.browserManager.snapshotDiff();
         this.logAction("snapshot_diff", result.diff || "(no changes)");
         return result;
       },
       evaluate: async (js: string) => {
-        const result = await this.browserManager.evaluate(js);
+        const result = await this.guard(() => this.browserManager.evaluate(js));
         const json = JSON.stringify(result);
         this.logAction("evaluate", `${js.slice(0, 100)}\n${json.slice(0, 400)}`);
         return result;
       },
       click: (selector: string) => {
         this.logAction("click", selector);
-        return this.browserManager.click(selector);
+        return this.guard(() => this.browserManager.click(selector));
       },
       typeText: (selector: string, text: string) => {
         this.logAction("type", `${text} → ${selector}`);
-        return this.browserManager.typeText(selector, text);
+        return this.guard(() => this.browserManager.typeText(selector, text));
       },
       pressKey: (key: string) => {
         this.logAction("press", key);
-        return this.browserManager.pressKey(key);
+        return this.guard(() => this.browserManager.pressKey(key));
       },
-      getSessionMode: () => this.browserManager.getSessionMode(),
-      setSessionMode: (mode: string) => {
-        this.logAction("session_mode", mode);
-        this.browserManager.setSessionMode(mode);
+      hover: (selector: string) => {
+        this.logAction("hover", selector);
+        return this.guard(() => this.browserManager.hover(selector));
+      },
+      scroll: (x: number, y: number) => {
+        this.logAction("scroll", `(${x}, ${y})`);
+        return this.guard(() => this.browserManager.scroll(x, y));
+      },
+      screenshot: () => {
+        this.logAction("screenshot", "Screenshot taken");
+        return this.browserManager.screenshot();
+      },
+      goBack: () => {
+        this.logAction("navigate", "Back");
+        return this.browserManager.goBack();
+      },
+      goForward: () => {
+        this.logAction("navigate", "Forward");
+        return this.browserManager.goForward();
+      },
+      reloadPage: () => {
+        this.logAction("navigate", "Reload");
+        return this.browserManager.reloadPage();
       },
       saveProfile: (domain: string) => {
         this.logAction("save_profile", domain);
-        return this.browserManager.saveProfile(domain).then(() => {
-          // Persist profile to file
-          const profile = this.browserManager.getLastProfile();
-          if (profile) {
-            const profilesDir = join(this.config.sessionDir, this.config.sessionName, "profiles");
-            mkdirSync(profilesDir, { recursive: true });
-            writeFileSync(join(profilesDir, `${domain}.json`), JSON.stringify(profile, null, 2));
-          }
+        return this.browserManager.saveProfile(domain).then(async (profile) => {
+          const profilesDir = join(this.config.sessionDir, this.config.sessionName, "profiles");
+          await mkdir(profilesDir, { recursive: true });
+          await writeFile(join(profilesDir, `${domain}.json`), JSON.stringify(profile, null, 2));
         });
       },
     };
@@ -187,6 +260,17 @@ export class DaemonServer {
 
     const status = this.browserManager.getSessionStatus();
     void peer.call.sessionStatusChanged(status);
+
+    void peer.call.observingChanged(this.observing);
+  }
+
+  private async guard<T>(fn: () => Promise<T>): Promise<T> {
+    await this.browserManager.markApiActionInProgress(true);
+    try {
+      return await fn();
+    } finally {
+      await this.browserManager.markApiActionInProgress(false);
+    }
   }
 
   private sessionDir(): string {

@@ -10,9 +10,11 @@ import { DaemonClient } from "../daemon/ipc/client.js";
 import { getDaemonSocketPath } from "../daemon/ipc/socket.js";
 import type { ClientApi } from "../daemon/ipc/api.js";
 import type { FlowebConfig } from "../core/config.js";
-import { getConfigPath, getLogPath } from "../core/config.js";
+import { getConfigPath, getLogPath, getSessionDir } from "../core/config.js";
+import { saveMessages, loadContextPrompt } from "../core/conversation-store.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { buildUserActionObservation } from "../agent/prompts.js";
 
 function mapDaemonActionType(type: string): ActionLogEntry["type"] | null {
   switch (type) {
@@ -26,6 +28,9 @@ function mapDaemonActionType(type: string): ActionLogEntry["type"] | null {
     case "switch_tab": return "switch";
     case "exec": return "exec";
     case "evaluate": return "evaluate";
+    case "hover": return "hover";
+    case "scroll": return "scroll";
+    case "check": case "uncheck": return "click";
     default: return null;
   }
 }
@@ -53,7 +58,12 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
   agentRef.current = agent;
 
   const clientRef = React.useRef<DaemonClient | null>(null);
+  const sessionDirRef = React.useRef<string | null>(null);
+  const historyInjectedRef = React.useRef(false);
   const [focusPanel, setFocusPanel] = React.useState<FocusPanel>("chat");
+  const [observing, setObserving] = React.useState(false);
+  const observingRef = React.useRef(false);
+  const messagesRef = React.useRef(state.messages);
   const pagesRef = React.useRef(state.pages);
   const activePageIdRef = React.useRef(state.activePageId);
   const pendingRef = React.useRef<string | null>(null);
@@ -72,7 +82,12 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
     }));
   }, []);
 
-  const executeCommand = createCommandExecutor(clientRef, setMessage, addMessage, agentRef, clearSession);
+  const updateObserving = (value: boolean) => {
+    observingRef.current = value;
+    setObserving(value);
+  };
+
+  const executeCommand = createCommandExecutor(clientRef, setMessage, addMessage, agentRef, clearSession, updateObserving);
 
   const handleSubmit = React.useCallback(
     async (text: string) => {
@@ -87,8 +102,17 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       // Show user input immediately, before command result
       addMessage({ role: "user", content: text });
 
-      const agentContent = executeCommand(text);
+      let agentContent = executeCommand(text);
       if (agentContent === null) return; // fully handled by slash command
+
+      // Inject previous conversation context on first message
+      if (!historyInjectedRef.current && sessionDirRef.current) {
+        historyInjectedRef.current = true;
+        const ctx = loadContextPrompt(sessionDirRef.current);
+        if (ctx) {
+          agentContent = `${ctx}\n\n[Current message]\n${agentContent}`;
+        }
+      }
 
       // Stream to agent (agentContent may differ from text for /mode, /spec etc.)
       setState((prev) => ({ ...prev, streamingContent: "" }));
@@ -135,6 +159,15 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
         if (response.trim()) {
           addMessage({ role: "agent", content: response.trim() });
         }
+        // Persist conversation after each turn
+        if (sessionDirRef.current) {
+          const now = new Date().toISOString();
+          saveMessages(sessionDirRef.current, [
+            ...messagesRef.current,
+            { role: "user" as const, content: text, timestamp: now },
+            ...(response.trim() ? [{ role: "agent" as const, content: response.trim(), timestamp: now }] : []),
+          ]);
+        }
       } catch (err) {
         addMessage({ role: "system", content: `Error: ${String(err)}` });
       } finally {
@@ -152,46 +185,162 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
     [addMessage, executeCommand, setState, setPendingMessage],
   );
 
+  messagesRef.current = state.messages;
   pagesRef.current = state.pages;
   activePageIdRef.current = state.activePageId;
 
   const observeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPageSnapshotRef = React.useRef<string>("");
+  const pendingObserveRef = React.useRef<{ pages: typeof state.pages; activePageId: string | null } | null>(null);
+
+  // Unified user activity tracking: both pagesChanged and actionLogged feed
+  // into one debounced pipeline → snapshotDiff → agent summary (if observing).
+  const pendingUserActionsRef = React.useRef<Array<{ type: string; detail: string }>>([]);
+  const userActivityTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processingUserActivityRef = React.useRef(false);
+  const mountedRef = React.useRef(true);
+
+  // Action types from the daemon that indicate user-driven page changes
+  // worth snapshotDiff-ing. snapshot_diff/snapshot/exec are results, not triggers.
+  const ACTIVITY_TRIGGERS = new Set([
+    "click", "type", "press", "scroll", "check", "uncheck",
+    "navigate", "close_tab",
+  ]);
 
   React.useEffect(() => {
     let mounted = true;
+    mountedRef.current = true;
     const sp = socketPath ?? getDaemonSocketPath();
 
-    const handlers: ClientApi = {
-      pagesChanged(pages, activePageId) {
-        if (!mounted) return;
-        const prevPages = pagesRef.current;
-        setPages(pages, activePageId);
+    // ── unified user activity flush ────────────────────────────────
+    async function flushUserActivity() {
+      if (processingUserActivityRef.current) return;
+      const actions = pendingUserActionsRef.current.splice(0);
+      if (actions.length === 0) return;
 
-        const ag = agentRef.current;
-        const isObserving = ag?.state.status === "idle";
+      const ag = agentRef.current;
+      const cl = clientRef.current;
+      if (!ag || !cl) return;
 
-        // During observation mode, show page changes as user messages in chat.
-        // Tool events already capture everything in the Browser panel activity log.
+      // If agent is still busy with a prior task, wait and retry
+      if (ag.state.status !== "idle") {
+        pendingUserActionsRef.current = [...actions, ...pendingUserActionsRef.current];
+        if (userActivityTimerRef.current) clearTimeout(userActivityTimerRef.current);
+        userActivityTimerRef.current = setTimeout(flushUserActivity, 500);
+        return;
+      }
+
+      processingUserActivityRef.current = true;
+      try {
+        // Wait for page to be fully stable (load, network idle, DOM settled)
+        // before taking the snapshot diff. Falls back to timeout gracefully.
+        await cl.remote.waitForPageStable(8000).catch(() => {});
+
+        // Take snapshot diff — this also triggers daemon logAction("snapshot_diff", …)
+        // which broadcasts actionLogged so the diff appears in the browser panel.
+        let diff = "";
+        try {
+          const result = await cl.remote.snapshotDiff();
+          diff = result.diff;
+        } catch (err) {
+          // diff unavailable, still build prompt with actions only
+        }
+
+        // In observing mode, send actions + diff to agent for a summary
+        if (observingRef.current) {
+          const prompt = buildUserActionObservation(actions, diff);
+          try {
+            let response = "";
+            for await (const event of ag.streamMessage(prompt)) {
+              if (!mounted) break;
+              switch (event.type) {
+                case "text":
+                  response += event.content;
+                  setState((prev) => ({ ...prev, streamingContent: response }));
+                  break;
+                case "tool_start":
+                  addMessage({ role: "tool", content: `${event.toolName}(${JSON.stringify(event.toolArgs)})` });
+                  break;
+                case "tool_end": {
+                  const truncated = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
+                  addMessage({ role: "tool", content: `  ${truncated}` });
+                  break;
+                }
+                case "error":
+                  addMessage({ role: "system", content: event.message });
+                  break;
+              }
+            }
+            if (response.trim()) {
+              addMessage({ role: "agent", content: response.trim() });
+              addAction({ type: "summary", detail: response.trim(), role: "agent" });
+            }
+            updateObserving(true);
+            setState((prev) => ({ ...prev, streamingContent: "" }));
+          } catch {
+            setState((prev) => ({ ...prev, streamingContent: "" }));
+          }
+
+          // Flush pending page-change observations that arrived while agent was busy
+          const pending = pendingObserveRef.current;
+          if (pending && mounted) {
+            pendingObserveRef.current = null;
+            const pendingSnapshot = JSON.stringify({ pages: pending.pages, activePageId: pending.activePageId });
+            if (pendingSnapshot !== lastPageSnapshotRef.current) {
+              lastPageSnapshotRef.current = pendingSnapshot;
+              pagesChangedImpl(pending.pages, pending.activePageId);
+            }
+          }
+        }
+      } finally {
+        processingUserActivityRef.current = false;
+      }
+    }
+
+    function scheduleUserActivityFlush() {
+      if (userActivityTimerRef.current) clearTimeout(userActivityTimerRef.current);
+      // Short debounce just to batch rapid events (e.g. click → navigate → title).
+      // The actual page stability wait happens in flushUserActivity via waitForPageStable.
+      userActivityTimerRef.current = setTimeout(flushUserActivity, 300);
+    }
+
+    // ── pagesChanged handler ───────────────────────────────────────
+    function pagesChangedImpl(pages: typeof state.pages, activePageId: string | null) {
+      if (!mounted) return;
+      const prevPages = pagesRef.current;
+      setPages(pages, activePageId);
+
+      const ag = agentRef.current;
+      const isObserving = ag?.state.status === "idle";
+
+        // During observation mode, log user page changes to actions.jsonl
+        // and show them as user messages in chat.
         if (isObserving) {
+          const cl = clientRef.current;
           if (pages.length > prevPages.length) {
             const newPages = pages.filter((p) => !prevPages.find((pp) => pp.id === p.id));
             for (const np of newPages) {
               if (np.url && np.url !== "about:blank") {
-                addMessage({ role: "user", content: `Opened ${np.url}` });
+                const detail = `Opened ${np.url}`;
+                cl?.remote.recordAction("navigate", detail).catch(() => {});
+                addMessage({ role: "user", content: detail });
               }
             }
           } else if (pages.length < prevPages.length) {
             const closed = prevPages.filter((p) => !pages.find((pp) => pp.id === p.id));
             for (const cp of closed) {
               const label = cp.title && cp.title !== "Loading..." ? cp.title : cp.url;
-              addMessage({ role: "user", content: `Closed ${label}` });
+              const detail = `Closed ${label}`;
+              cl?.remote.recordAction("close_tab", detail).catch(() => {});
+              addMessage({ role: "user", content: detail });
             }
           } else {
             for (const p of pages) {
               const prev = prevPages.find((pp) => pp.id === p.id);
               if (prev && prev.title !== p.title && p.title !== "Loading...") {
-                addMessage({ role: "user", content: `Loaded ${p.title?.slice(0, 50)}` });
+                const detail = `Loaded ${p.title?.slice(0, 50)}`;
+                cl?.remote.recordAction("navigate", detail).catch(() => {});
+                addMessage({ role: "user", content: detail });
               }
             }
           }
@@ -199,11 +348,18 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
 
         // Only send observation when agent is idle (not in tool-call loop).
         // Injecting during tool execution breaks the ReAct message chain.
-        if (ag && ag.isReady() && isObserving && pages.length > 0) {
+        if (ag && ag.isReady() && pages.length > 0) {
           const snapshot = JSON.stringify({ pages, activePageId });
           if (snapshot === lastPageSnapshotRef.current) return;
-          lastPageSnapshotRef.current = snapshot;
 
+          if (!isObserving) {
+            // Agent is busy — save as pending, will be processed when idle
+            pendingObserveRef.current = { pages, activePageId };
+            lastPageSnapshotRef.current = snapshot;
+            return;
+          }
+
+          lastPageSnapshotRef.current = snapshot;
           if (observeTimerRef.current) clearTimeout(observeTimerRef.current);
           observeTimerRef.current = setTimeout(async () => {
             if (!mounted) return;
@@ -239,25 +395,51 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
               if (response.trim()) {
                 addMessage({ role: "agent", content: response.trim() });
               }
+              updateObserving(true);
               setState((prev) => ({ ...prev, streamingContent: "" }));
             } catch {
               setState((prev) => ({ ...prev, streamingContent: "" }));
             }
+            // After observe completes, flush pending changes that arrived while we were thinking
+            const pending = pendingObserveRef.current;
+            if (pending && mounted) {
+              pendingObserveRef.current = null;
+              const pendingSnapshot = JSON.stringify({ pages: pending.pages, activePageId: pending.activePageId });
+              if (pendingSnapshot !== lastPageSnapshotRef.current) {
+                lastPageSnapshotRef.current = pendingSnapshot;
+                // Trigger a follow-up observation for the missed change
+                pagesChangedImpl(pending.pages, pending.activePageId);
+              }
+            }
           }, 1500);
         }
-      },
-      sessionStatusChanged(status) {
-        if (!mounted) return;
-        setSessionStatus(status as "disconnected" | "connecting" | "connected" | "error");
-      },
-      actionLogged(action) {
-        if (!mounted) return;
-        const type = mapDaemonActionType(action.type);
-        if (type) {
-          addAction({ type, detail: action.detail, role: action.role });
-        }
-      },
-    };
+      } // end pagesChangedImpl
+
+      const handlers: ClientApi = {
+        pagesChanged: pagesChangedImpl,
+        sessionStatusChanged(status) {
+          if (!mounted) return;
+          setSessionStatus(status as "disconnected" | "connecting" | "connected" | "error");
+        },
+        actionLogged(action) {
+          if (!mounted) return;
+          const type = mapDaemonActionType(action.type);
+          if (type) {
+            addAction({ type, detail: action.detail, role: action.role });
+          }
+          // Buffer user-triggered actions for snapshotDiff + agent summary.
+          // Only buffer action types that indicate user-driven page changes
+          // (skip snapshot_diff, snapshot, exec, evaluate — those are results).
+          if (observingRef.current && action.role === "user" && ACTIVITY_TRIGGERS.has(action.type)) {
+            pendingUserActionsRef.current.push({ type: action.type, detail: action.detail });
+            scheduleUserActivityFlush();
+          }
+        },
+        observingChanged(obs) {
+          if (!mounted) return;
+          updateObserving(obs);
+        },
+      };
 
     async function connect() {
       let client: DaemonClient;
@@ -296,6 +478,7 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       }
 
       if (mounted && config) {
+        sessionDirRef.current = getSessionDir(config);
         const agentConfig = config.llm;
         try {
           const { loadedSkills, availableTools } = await agentRef.current.init(client, {
@@ -356,7 +539,9 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
 
     return () => {
       mounted = false;
+      mountedRef.current = false;
       if (observeTimerRef.current) clearTimeout(observeTimerRef.current);
+      if (userActivityTimerRef.current) clearTimeout(userActivityTimerRef.current);
       clientRef.current?.destroy();
       clientRef.current = null;
     };
@@ -441,6 +626,7 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       pendingMessage={state.pendingMessage}
       actionLog={state.actionLog}
       focusPanel={focusPanel}
+      observing={observing}
       agentReady={agent.isReady()}
       agentStatus={agent.state.status}
       agentError={agent.state.error}

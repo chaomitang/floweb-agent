@@ -27,16 +27,6 @@ browser_exec 在 TUI 的**共享浏览器实例**中运行代码。三个对象�
 当需要编写独立脚本（用于生产环境）时，写成 exported function 调用 chromium.launch()。
 但验证逻辑时应先在 browser_exec 中利用共享的 page/browser/context 逐步执行。
 
-## 观察模式
-用户可能希望你观察他们手动操作浏览器 —— 他们可能会说"看我操作"、"帮我看着"等。
-类似地，他们会用"好了"、"分析一下"等短语表示操作完成。
-
-- 当用户表示希望你观察时：简短确认（"好的，我在观察"）并等待。浏览器快照会以 [Observation]
-  消息的形式到达 —— 给出简洁的反馈、警告或确认。
-- 当用户表示完成时：停止观察并给出简短总结 —— 发生了什么、有什么变化、可操作的建议。
-- 进入或退出观察模式无需工具调用 —— 根据用户意图自然切换。
-- 如果不确定用户想让你观察还是交互，简短询问。
-
 ## Spec 驱动开发
 当用户要求创建 spec、实现 spec 或审查代码时：
 - 遵循已加载技能中的说明（见下方）
@@ -67,4 +57,15 @@ ${skillSections.join("\n\n---\n\n")}`;
 export function buildObservationPrompt(pageState: unknown): string {
   return `[Observation] Browser state changed:
 ${JSON.stringify(pageState, null, 2)}`;
+}
+
+export function buildUserActionObservation(actions: Array<{ type: string; detail: string }>, diff: string): string {
+  const actionLines = actions.map(
+    (a) => `- ${a.type}: ${a.detail}`,
+  );
+  const parts = [`[User Action]\n${actionLines.join("\n")}`];
+  if (diff && diff !== "(no changes)") {
+    parts.push(`\n[Snapshot Diff]\n${diff}`);
+  }
+  return parts.join("\n");
 }
