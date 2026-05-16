@@ -241,6 +241,35 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     },
   );
 
+  const moveCursor = tool(
+    async ({ x, y }: { x: number; y: number }) => {
+      await client().remote.moveCursor(x, y);
+      return `Cursor moved to (${x}, ${y})`;
+    },
+    {
+      name: "browser_move_cursor",
+      description: "移动可视化鼠标光标到指定坐标。用于展示操作位置给用户看。",
+      schema: z.object({
+        x: z.number().describe("X 坐标（像素）"),
+        y: z.number().describe("Y 坐标（像素）"),
+      }),
+    },
+  );
+
+  const highlight = tool(
+    async ({ selector }: { selector: string }) => {
+      await client().remote.highlightElement(selector);
+      return `Highlighted "${selector}"`;
+    },
+    {
+      name: "browser_highlight",
+      description: "在指定元素上显示高亮框，用于向用户指示操作目标。高亮框会自动消退。",
+      schema: z.object({
+        selector: z.string().describe("CSS 选择器"),
+      }),
+    },
+  );
+
   const scroll = tool(
     async ({ x, y }: { x: number; y: number }) => {
       await client().remote.scroll(x, y);
@@ -403,6 +432,8 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     pressKey,
     hover,
     scroll,
+    moveCursor,
+    highlight,
     selectOption,
     wait,
     // ── Tab Management ──

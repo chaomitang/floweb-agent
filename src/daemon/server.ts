@@ -99,9 +99,11 @@ export class DaemonServer {
         return this.browserManager.closePage(pageId);
       },
 
-      createSession: (url: string) => {
+      createSession: async (url: string) => {
         this.logAction("navigate", `Open ${url}`);
-        return this.browserManager.createSession(this.config, url);
+        await this.browserManager.createSession(this.config, url);
+        // 新会话默认粉色边框，标识 TUI-daemon 连接已就绪
+        await this.browserManager.setAgentBorder("pink");
       },
 
       closeSession: () => {
@@ -195,6 +197,15 @@ export class DaemonServer {
         this.logAction("evaluate", `${js.slice(0, 100)}\n${json.slice(0, 400)}`);
         return result;
       },
+      moveCursor: (x: number, y: number) => {
+        return this.browserManager.moveCursor(x, y);
+      },
+      highlightElement: (selector: string) => {
+        return this.browserManager.highlightElement(selector);
+      },
+      setAgentBorder: (color: "pink" | "yellow") => {
+        return this.browserManager.setAgentBorder(color);
+      },
       click: (selector: string) => {
         this.logAction("click", selector);
         return this.guard(() => this.browserManager.click(selector));
@@ -262,6 +273,11 @@ export class DaemonServer {
     void peer.call.sessionStatusChanged(status);
 
     void peer.call.observingChanged(this.observing);
+
+    // 已有会话时，确保边框可见（TUI-daemon 连接标识）
+    if (status === "connected") {
+      this.browserManager.setAgentBorder("pink").catch(() => {});
+    }
   }
 
   private async guard<T>(fn: () => Promise<T>): Promise<T> {

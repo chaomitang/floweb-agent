@@ -82,7 +82,7 @@ export class DaemonClient {
     options?: DaemonClientOptions,
   ): Promise<{ pid: number; socketPath: string; client: DaemonClient }> {
     const require = createRequire(import.meta.url);
-    const daemonEntry = require.resolve("../daemon.js");
+    const daemonEntry = require.resolve("../daemon");
 
     const child: ChildProcess = fork(daemonEntry, [JSON.stringify(config)], {
       stdio: ["pipe", "pipe", "pipe", "ipc"],

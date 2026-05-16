@@ -1,5 +1,4 @@
 import type { Page } from "playwright";
-import { compactHTML } from "./compact-html.js";
 
 // ── types ──────────────────────────────────────────────────────────
 
@@ -8,12 +7,10 @@ export interface SnapshotNode {
   name: string;
   ref: string;
   children: SnapshotNode[];
-  // element info for interactive nodes
   tag?: string;
   attributes?: Record<string, string>;
   value?: string;
   url?: string;
-  // for dedup / diff
   fingerprint: string;
 }
 
@@ -22,11 +19,9 @@ export interface PageSnapshot {
   url: string;
   root: SnapshotNode;
   refs: Map<string, SnapshotNode>;
-  /** Condensed HTML fallback — populated when CDP AXTree is unavailable. */
-  fallbackHTML?: string;
 }
 
-// ── AXTree capture via CDP ─────────────────────────────────────────
+// ── CDP AX tree types ──────────────────────────────────────────────
 
 interface RawAXNode {
   nodeId: string;
@@ -36,16 +31,25 @@ interface RawAXNode {
   childIds?: string[];
   ignored?: boolean;
   focused?: boolean;
+  backendDOMNodeId?: number;
 }
+
+interface RawDOMNode {
+  nodeId: number;
+  backendNodeId: number;
+  nodeType: number;
+  nodeName: string;
+  attributes?: string[];
+  children?: RawDOMNode[];
+  contentDocument?: RawDOMNode;
+  shadowRoots?: RawDOMNode[];
+}
+
+// ── constants ──────────────────────────────────────────────────────
 
 let _refCounter = 0;
+function nextRef(): string { return "l" + ++_refCounter; }
 
-function nextRef(): string {
-  return "l" + ++_refCounter;
-}
-
-// Only these roles get short ref IDs (l1, l2, …). StaticText, InlineTextBox,
-// and layout-only generics are excluded — they just add noise.
 const REFS_BY_ROLE = new Set([
   "button", "link", "textbox", "textfield", "searchbox", "combobox", "listbox",
   "menuitem", "menuitemcheckbox", "menuitemradio", "option", "radio",
@@ -64,6 +68,14 @@ const INTERACTIVE_ROLES = new Set([
 
 const MAX_CHILDREN_PER_PARENT = 4;
 
+// DOM 属性白名单——只有这些属性值得传给 LLM
+const KEEP_ATTRS = new Set([
+  "id", "name", "type", "placeholder", "href", "src", "action", "method",
+  "alt", "title", "value", "aria-label", "aria-expanded", "aria-pressed",
+  "aria-selected", "aria-checked", "role", "tabindex", "contenteditable",
+  "data-testid", "data-test", "data-qa", "data-cy",
+]);
+
 function normalizeRole(raw: string): string {
   const r = raw.toLowerCase().replace(/\s+/g, "");
   if (r === "statictext" || r === "inlinetextbox") return "text";
@@ -77,10 +89,87 @@ function getAxValue(v: unknown): string {
   return "";
 }
 
-function buildTree(
+// ── capture ────────────────────────────────────────────────────────
+
+export async function captureSnapshot(page: Page): Promise<PageSnapshot> {
+  _refCounter = 0;
+  const title = await page.title();
+  const url = page.url();
+
+  const cdp = await page.context().newCDPSession(page);
+
+  try {
+    // 并行抓取 AX 树（主体结构）+ DOM 树（tag 名和属性）
+    await cdp.send("Accessibility.enable");
+    const [axResult, domResult] = await Promise.all([
+      cdp.send("Accessibility.getFullAXTree", { depth: 100 }),
+      cdp.send("DOM.getDocument", { depth: -1, pierce: true }).catch(() => null),
+    ]);
+
+    // 从 DOM 树提取属性映射：backendNodeId → {id, href, placeholder, ...}
+    const domAttrs = new Map<number, Record<string, string>>();
+    if (domResult) {
+      walkDOM(domResult.root, domAttrs);
+    }
+
+    // AX 树节点映射
+    const nodeMap = new Map<string, RawAXNode>();
+    const axNodes = axResult.nodes as unknown as RawAXNode[];
+    for (const n of axNodes) {
+      nodeMap.set(n.nodeId, n);
+    }
+
+    const rootRaw = axNodes[0] as unknown as RawAXNode | undefined;
+    const rootId = rootRaw?.nodeId ?? "";
+    const root = buildMergedTree(nodeMap, rootId, "", domAttrs) ?? {
+      role: "root", name: "", ref: nextRef(), children: [], fingerprint: "root:",
+    };
+
+    const refs = new Map<string, SnapshotNode>();
+    const walk = (node: SnapshotNode) => {
+      if (node.ref) refs.set(node.ref, node);
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+
+    return { title, url, root, refs };
+  } catch {
+    // CDP 完全不可用——最小回退
+    return basicFallback(page);
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
+}
+
+function walkDOM(node: unknown, out: Map<number, Record<string, string>>): void {
+  const n = node as Record<string, unknown>;
+  if (!n) return;
+  const backendNodeId = n.backendNodeId as number | undefined;
+  const attrs = n.attributes as string[] | undefined;
+  if (backendNodeId && attrs?.length) {
+    const filtered: Record<string, string> = {};
+    for (let i = 0; i < attrs.length - 1; i += 2) {
+      const name = attrs[i];
+      if (name && KEEP_ATTRS.has(name)) {
+        filtered[name] = attrs[i + 1] || "";
+      }
+    }
+    if (Object.keys(filtered).length > 0) {
+      out.set(backendNodeId, filtered);
+    }
+  }
+  const children = n.children as unknown[] | undefined;
+  if (children) for (const c of children) walkDOM(c, out);
+  if (n.contentDocument) walkDOM(n.contentDocument, out);
+  const shadow = n.shadowRoots as unknown[] | undefined;
+  if (shadow) for (const s of shadow) walkDOM(s, out);
+}
+
+function buildMergedTree(
   rawNodes: Map<string, RawAXNode>,
   nodeId: string,
   _parentName: string,
+  domAttrs: Map<number, Record<string, string>>,
 ): SnapshotNode | null {
   const raw = rawNodes.get(nodeId);
   if (!raw || raw.ignored) return null;
@@ -88,27 +177,25 @@ function buildTree(
   const role = normalizeRole(getAxValue(raw.role) || "generic");
   const name = getAxValue(raw.name).slice(0, 200);
   const value = getAxValue(raw.value);
+  const backendId = raw.backendDOMNodeId;
 
-  // Collect children
   const children: SnapshotNode[] = [];
   if (raw.childIds) {
     for (const childId of raw.childIds) {
-      const child = buildTree(rawNodes, childId, name);
+      const child = buildMergedTree(rawNodes, childId, name, domAttrs);
       if (child) children.push(child);
     }
   }
 
-  // Collapse: if only child is text with same name, take its children
-  if (
-    children.length === 1 &&
-    children[0].role === "text" &&
-    children[0].name === name
-  ) {
+  if (children.length === 1 && children[0].role === "text" && children[0].name === name) {
     children.length = 0;
   }
 
   const ref = REFS_BY_ROLE.has(role) ? nextRef() : "";
   const fp = `${role}:${name}:${value}`;
+
+  // 从 DOM 树补充 tag 名和属性
+  const domData = backendId ? domAttrs.get(backendId) : undefined;
 
   return {
     role,
@@ -116,126 +203,53 @@ function buildTree(
     ref,
     children,
     value: value || undefined,
+    tag: domData ? tagFromAttrs(domData) : undefined,
+    attributes: domData,
     fingerprint: fp,
   };
 }
 
-export async function captureSnapshot(page: Page): Promise<PageSnapshot> {
-  _refCounter = 0;
-
-  try {
-    // Get title + url
-    const title = await page.title();
-    const url = page.url();
-
-    // Access CDP session for AXTree
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Accessibility.enable");
-
-    const { nodes: axNodes } = await cdp.send("Accessibility.getFullAXTree", {
-      depth: 100,
-    });
-
-    // Build lookup map
-    const nodeMap = new Map<string, RawAXNode>();
-    for (const n of axNodes) {
-      const node = n as unknown as RawAXNode;
-      nodeMap.set(node.nodeId, node);
-    }
-
-    // Build from root node (first one)
-    const rootRaw = axNodes[0] as unknown as RawAXNode | undefined;
-    const rootId = rootRaw?.nodeId ?? "";
-    const root = buildTree(nodeMap, rootId, "") ?? {
-      role: "root",
-      name: "",
-      ref: nextRef(),
-      children: [],
-      fingerprint: "root:",
-    };
-
-    // Build refs map
-    const refs = new Map<string, SnapshotNode>();
-    const walk = (node: SnapshotNode) => {
-      refs.set(node.ref, node);
-      for (const child of node.children) walk(child);
-    };
-    walk(root);
-
-    await cdp.detach();
-    return { title, url, root, refs };
-  } catch {
-    // Fallback: basic snapshot via evaluate
-    return fallbackSnapshot(page);
-  }
+function tagFromAttrs(attrs: Record<string, string>): string | undefined {
+  // DOM 树不直接给 tagName（DOM.getDocument 的节点有 nodeName，但 AX 树的 backendDOMNodeId
+  // 可能对应任何类型的 DOM 节点）。返回 undefined 让渲染时只用 role。
+  return undefined;
 }
 
-async function fallbackSnapshot(page: Page): Promise<PageSnapshot> {
+// ── minimal fallback（CDP 完全挂掉时） ─────────────────────────────
+
+async function basicFallback(page: Page): Promise<PageSnapshot> {
   _refCounter = 0;
   const title = await page.title();
   const url = page.url();
   const refs = new Map<string, SnapshotNode>();
 
-  // Run basic DOM scan + page content in parallel
-  const [data, rawHTML] = await Promise.all([
-    page.evaluate(() => {
-      const interactive = [
-        ...document.querySelectorAll(
-          'a, button, input, textarea, select, [role="button"], [role="link"], [role="textbox"], [role="searchbox"]',
-        ),
-      ];
-      return {
-        title: document.title,
-        url: location.href,
-        elements: interactive.slice(0, 200).map((el) => {
-          const tag = el.tagName.toLowerCase();
-          const text = (el as HTMLElement).innerText?.slice(0, 60) || "";
-          const href = (el as HTMLAnchorElement).href || "";
-          const placeholder = (el as HTMLInputElement).placeholder || "";
-          const type = (el as HTMLInputElement).type || "";
-          const id = (el as HTMLElement).id || "";
-          return { tag, text, href: href || undefined, placeholder: placeholder || undefined, type: type || undefined, id: id || undefined };
-        }),
-      } as {
-        title: string;
-        url: string;
-        elements: Array<{
-          tag: string;
-          text: string;
-          href?: string;
-          placeholder?: string;
-          type?: string;
-          id?: string;
-        }>;
-      };
-    }),
-    page.content().catch(() => ""),
-  ]);
+  const data = await page.evaluate(() => {
+    const interactive = [
+      ...document.querySelectorAll(
+        'a, button, input, textarea, select, [role="button"], [role="link"], [role="textbox"], [role="searchbox"]',
+      ),
+    ];
+    return {
+      title: document.title,
+      url: location.href,
+      elements: interactive.slice(0, 200).map((el) => {
+        const tag = el.tagName.toLowerCase();
+        const text = (el as HTMLElement).innerText?.slice(0, 60) || "";
+        const href = (el as HTMLAnchorElement).href || "";
+        const placeholder = (el as HTMLInputElement).placeholder || "";
+        const type = (el as HTMLInputElement).type || "";
+        const id = (el as HTMLElement).id || "";
+        return { tag, text, href: href || undefined, placeholder: placeholder || undefined, type: type || undefined, id: id || undefined };
+      }),
+    };
+  });
 
-  // Condense the raw HTML for LLM consumption
-  let fallbackHTML: string | undefined;
-  if (rawHTML) {
-    try {
-      const result = compactHTML(rawHTML);
-      fallbackHTML = [
-        `── Compacted HTML fallback (CDP AXTree unavailable) ──`,
-        `Original: ${result.originalLength} chars → Compacted: ${result.condensedLength} chars`,
-        `Reductions: ${Object.entries(result.reductions).map(([k, v]) => `${k} -${v}`).join(", ")}`,
-        ``,
-        result.html,
-      ].join("\n");
-    } catch {
-      // ignore compactHTML errors
-    }
-  }
-
-  const children: SnapshotNode[] = data.elements.map((el) => {
+  const children: SnapshotNode[] = data.elements.map((el: { tag: string; text: string; href?: string; placeholder?: string; type?: string; id?: string }) => {
     const ref = nextRef();
     const label = [el.text, el.href, el.placeholder].filter(Boolean).join(" | ");
     const node: SnapshotNode = {
       role: el.tag,
-      name: label.slice(0, 100),
-      ref,
+      name: label.slice(0, 100), ref,
       children: [],
       tag: el.tag,
       attributes: { id: el.id || "", type: el.type || "", placeholder: el.placeholder || "", href: el.href || "" },
@@ -245,58 +259,35 @@ async function fallbackSnapshot(page: Page): Promise<PageSnapshot> {
     return node;
   });
 
-  const root: SnapshotNode = {
-    role: "page",
-    name: title,
-    ref: nextRef(),
-    children,
-    url,
-    fingerprint: `page:${title}`,
+  return {
+    title, url,
+    root: { role: "page", name: title, ref: nextRef(), children, url, fingerprint: `page:${title}` },
+    refs,
   };
-
-  return { title, url, root, refs, fallbackHTML };
 }
 
 // ── rendering ──────────────────────────────────────────────────────
 
 export function renderSnapshot(snap: PageSnapshot): string {
-  const lines: string[] = [
-    `Title: ${snap.title}`,
-    `URL: ${snap.url}`,
-    ``,
-  ];
-
+  const lines: string[] = [`Title: ${snap.title}`, `URL: ${snap.url}`, ``];
   renderNodeBody(snap.root, 0, lines);
-
-  if (snap.fallbackHTML) {
-    lines.push(``);
-    lines.push(snap.fallbackHTML);
-  }
-
   return lines.join("\n");
 }
 
-// ── helpers ────────────────────────────────────────────────────────
-
 function renderNodeBody(node: SnapshotNode, depth: number, lines: string[]): void {
-  // Try single-child chain folding first (recursive)
   const folded = foldableChild(node);
-  if (folded) {
-    renderNodeBody(folded, depth, lines);
-    return;
-  }
+  if (folded) { renderNodeBody(folded, depth, lines); return; }
 
   const indent = "  ".repeat(depth);
   const ref = node.ref ? ` [${node.ref}]` : "";
   const name = node.name ? ` "${node.name.slice(0, 80)}"` : "";
 
   if (node.children.length === 0) {
-    if (INTERACTIVE_ROLES.has(node.role) && node.attributes) {
-      const attrs = " " +
-        Object.entries(node.attributes)
-          .filter(([, v]) => v)
-          .map(([k, v]) => `${k}="${v}"`)
-          .join(" ");
+    if (node.attributes && Object.keys(node.attributes).length > 0) {
+      const attrs = " " + Object.entries(node.attributes)
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(" ");
       lines.push(`${indent}<${node.role}${ref}${attrs}>${name}</${node.role}>`);
     } else {
       lines.push(`${indent}<${node.role}${ref}>${name}</${node.role}>`);
@@ -308,20 +299,11 @@ function renderNodeBody(node: SnapshotNode, depth: number, lines: string[]): voi
   }
 }
 
-function renderChildren(
-  children: SnapshotNode[],
-  depth: number,
-  lines: string[],
-): void {
-  // Merge adjacent text-only nodes that share the same name
+function renderChildren(children: SnapshotNode[], depth: number, lines: string[]): void {
   const merged = mergeAdjacentTextNodes(children);
   const shown = merged.slice(0, MAX_CHILDREN_PER_PARENT);
   const truncated = merged.slice(MAX_CHILDREN_PER_PARENT);
-
-  for (const child of shown) {
-    renderNodeBody(child, depth, lines);
-  }
-
+  for (const child of shown) renderNodeBody(child, depth, lines);
   if (truncated.length > 0) {
     const indent = "  ".repeat(depth);
     const summary = truncatedChildrenSummary(truncated);
@@ -329,15 +311,11 @@ function renderChildren(
   }
 }
 
-// If node is a non-semantic wrapper with a single structural child, return the
-// child so renderNodeBody can fold recursively. e.g. div > section > link → link
 function foldableChild(node: SnapshotNode): SnapshotNode | null {
   if (node.children.length !== 1) return null;
   const child = node.children[0]!;
   if (!child) return null;
-  // Keep the current node if it carries a ref (semantically meaningful)
   if (node.ref) return null;
-  // Don't fold into text-like leaves
   if (child.role === "statictext" || child.role === "inlinetextbox" || child.role === "text") return null;
   return child;
 }
@@ -347,13 +325,7 @@ function mergeAdjacentTextNodes(nodes: SnapshotNode[]): SnapshotNode[] {
   for (const node of nodes) {
     const prev = result[result.length - 1];
     const isTextLike = node.role === "statictext" || node.role === "inlinetextbox" || node.role === "text";
-    if (
-      prev &&
-      isTextLike &&
-      (prev.role === "statictext" || prev.role === "inlinetextbox" || prev.role === "text") &&
-      prev.name === node.name
-    ) {
-      // Skip duplicate adjacent text with same name
+    if (prev && isTextLike && (prev.role === "statictext" || prev.role === "inlinetextbox" || prev.role === "text") && prev.name === node.name) {
       continue;
     }
     result.push(node);

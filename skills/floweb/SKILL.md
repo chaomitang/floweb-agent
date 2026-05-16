@@ -51,6 +51,8 @@ description: 浏览器自动化 + Spec 驱动开发。导航页面、抓取快�
 | `browser_press` | 按键（Enter、Escape、Tab 等） |
 | `browser_hover` | 鼠标悬停在元素上 |
 | `browser_scroll` | 滚动页面（x/y 像素） |
+| `browser_move_cursor` | 移动可视化鼠标光标到指定坐标，展示操作位置 |
+| `browser_highlight` | 在元素上显示高亮框，自动消退 |
 | `browser_select` | 选择下拉框选项 |
 | `browser_wait` | 等待毫秒数或元素出现 |
 | `browser_exec` | 在浏览器中执行 TypeScript/JS，**执行前后自动 diff** |

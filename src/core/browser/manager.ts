@@ -8,6 +8,7 @@ import { captureSnapshot, renderSnapshot } from "./snapshot.js";
 import { diffSnapshots, renderDiff } from "./snapshot-diff.js";
 import { DaemonExecRepl } from "./exec-repl.js";
 import { compactHTML } from "./compact-html.js";
+import { moveCursor, highlightElement, setBorderColor, installScript, highlightStyle as highlightCSS } from "./visual-feedback.js";
 import type { PageSnapshot } from "./snapshot.js";
 
 export const BrowserManagerEvents = {
@@ -23,6 +24,7 @@ export class BrowserManager extends EventEmitter {
   private pageInfos = new Map<string, PageInfo>();
   private activePageId: string | null = null;
   private lastSnapshot: PageSnapshot | null = null;
+  private borderColor: "pink" | "yellow" = "pink";
   private repl = new DaemonExecRepl();
 
   getPageInfos(): PageInfo[] {
@@ -91,6 +93,10 @@ export class BrowserManager extends EventEmitter {
     this.context = await this.browser.newContext({
       viewport: config.viewport,
     });
+
+    // 可视化反馈层（边框 + 光标 + 高亮）——context 级，新页面自动注入
+    await this.context.addInitScript({ content: installScript() });
+    await this.context.addInitScript({ content: highlightCSS() });
 
     // Capture user clicks & typing during observation mode
     await this.context.exposeBinding("__floweb_log", (_source, type: string, detail: string) => {
@@ -329,13 +335,33 @@ export class BrowserManager extends EventEmitter {
   async click(selector: string): Promise<void> {
     const page = this.getActivePage();
     if (!page) throw new Error("No active page");
+    // Visual feedback: move cursor + highlight before click
+    await this.showVisualFeedback(page, selector);
     await page.click(selector, { timeout: 10000 });
   }
 
   async typeText(selector: string, text: string): Promise<void> {
     const page = this.getActivePage();
     if (!page) throw new Error("No active page");
+    await this.showVisualFeedback(page, selector);
     await page.fill(selector, text, { timeout: 10000 });
+  }
+
+  private async showVisualFeedback(page: Page, selector: string): Promise<void> {
+    try {
+      // 确保可视化层存在（兼容旧页面，idempotent）
+      await page.evaluate(installScript()).catch(() => {});
+      const box = await page.locator(selector).boundingBox();
+      if (!box) return;
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      await Promise.all([
+        moveCursor(page, cx, cy),
+        highlightElement(page, selector),
+      ]);
+    } catch {
+      // visual feedback is best-effort
+    }
   }
 
   async pressKey(key: string): Promise<void> {
@@ -361,6 +387,27 @@ export class BrowserManager extends EventEmitter {
     if (!page) throw new Error("No active page");
     const buf = await page.screenshot({ type: "png" });
     return buf.toString("base64");
+  }
+
+  async moveCursor(x: number, y: number): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) return;
+    await moveCursor(page, x, y);
+  }
+
+  async highlightElement(selector: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) return;
+    await highlightElement(page, selector);
+  }
+
+  async setAgentBorder(color: "pink" | "yellow"): Promise<void> {
+    this.borderColor = color;
+    const page = this.getActivePage();
+    if (!page) return;
+    // 确保视觉层已注入（兼容重定向后 DOM 重建）
+    await page.evaluate(installScript()).catch(() => {});
+    await setBorderColor(page, color);
   }
 
   async goBack(): Promise<void> {
@@ -556,8 +603,14 @@ export class BrowserManager extends EventEmitter {
   }
 
   private setupPageListeners(page: Page, pageId: string): void {
+    // DOM 解析完成时立即恢复边框（比 load 早得多）
+    page.on("domcontentloaded", () => {
+      setBorderColor(page, this.borderColor).catch(() => {});
+    });
     page.on("load", () => {
       this.syncPageInfo(page, pageId);
+      // load 后再次确保边框颜色正确（覆盖可能的 JS 修改）
+      setBorderColor(page, this.borderColor).catch(() => {});
     });
 
     page.on("close", () => {

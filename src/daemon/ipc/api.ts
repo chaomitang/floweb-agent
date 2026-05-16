@@ -28,6 +28,9 @@ export interface DaemonApi {
   snapshotDiff(): { text: string; diff: string };
   compactHTML(): { html: string; originalLength: number; condensedLength: number; reductions: Record<string, number> };
   evaluate(js: string): unknown;
+  moveCursor(x: number, y: number): void;
+  highlightElement(selector: string): void;
+  setAgentBorder(color: "pink" | "yellow"): void;
   click(selector: string): void;
   typeText(selector: string, text: string): void;
   pressKey(key: string): void;

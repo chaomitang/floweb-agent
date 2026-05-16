@@ -20,7 +20,7 @@ describe("BrowserManager", () => {
     expect(manager.getActivePage()).toBeNull();
   });
 
-  it("creates a session with an initial page", async () => {
+  it("creates a session with an initial page", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 

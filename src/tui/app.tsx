@@ -181,6 +181,15 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
         setPendingMessage(null);
         setTimeout(() => handleSubmit(pending), 0);
       }
+
+      // Flush pending page-change observations that arrived while agent was busy.
+      // This handles redirects after /mode toggle while agent was still responding.
+      const pendingObs = pendingObserveRef.current;
+      if (pendingObs && pagesChangedImplRef.current) {
+        pendingObserveRef.current = null;
+        setState((prev) => ({ ...prev, streamingContent: "" }));
+        pagesChangedImplRef.current(pendingObs.pages, pendingObs.activePageId);
+      }
     },
     [addMessage, executeCommand, setState, setPendingMessage],
   );
@@ -192,6 +201,7 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
   const observeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPageSnapshotRef = React.useRef<string>("");
   const pendingObserveRef = React.useRef<{ pages: typeof state.pages; activePageId: string | null } | null>(null);
+  const pagesChangedImplRef = React.useRef<((pages: typeof state.pages, activePageId: string | null) => void) | null>(null);
 
   // Unified user activity tracking: both pagesChanged and actionLogged feed
   // into one debounced pipeline → snapshotDiff → agent summary (if observing).
@@ -306,6 +316,7 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
 
     // ── pagesChanged handler ───────────────────────────────────────
     function pagesChangedImpl(pages: typeof state.pages, activePageId: string | null) {
+      pagesChangedImplRef.current = pagesChangedImpl;
       if (!mounted) return;
       const prevPages = pagesRef.current;
       setPages(pages, activePageId);
@@ -427,12 +438,17 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
           if (type) {
             addAction({ type, detail: action.detail, role: action.role });
           }
-          // Buffer user-triggered actions for snapshotDiff + agent summary.
-          // Only buffer action types that indicate user-driven page changes
-          // (skip snapshot_diff, snapshot, exec, evaluate — those are results).
-          if (observingRef.current && action.role === "user" && ACTIVITY_TRIGGERS.has(action.type)) {
-            pendingUserActionsRef.current.push({ type: action.type, detail: action.detail });
-            scheduleUserActivityFlush();
+          // 用户操作 → 自动进入观察模式（agent 空闲时）
+          if (action.role === "user" && ACTIVITY_TRIGGERS.has(action.type)) {
+            if (!observingRef.current && agentRef.current?.state.status === "idle") {
+              updateObserving(true);
+              // 立即切换边框为黄色，不等 React re-render
+              clientRef.current?.remote.setAgentBorder("yellow").catch(() => {});
+            }
+            if (observingRef.current) {
+              pendingUserActionsRef.current.push({ type: action.type, detail: action.detail });
+              scheduleUserActivityFlush();
+            }
           }
         },
         observingChanged(obs) {
@@ -546,6 +562,19 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       clientRef.current = null;
     };
   }, [config, socketPath, initialUrl, setPages, setMessage, setSessionStatus, addMessage]);
+
+  // 页面边框：TUI-daemon 连接标识，持续显示。粉色=正常，黄色=观察模式，agent 操作时临时变粉
+  React.useEffect(() => {
+    const cl = clientRef.current;
+    if (!cl) return;
+    const thinking = agent.state.status === "thinking" || agent.state.status === "executing";
+    // 操作中 → 粉色（无论模式），空闲时观察模式 → 黄色，空闲时正常 → 粉色
+    if (thinking) {
+      cl.remote.setAgentBorder("pink").catch(() => {});
+    } else {
+      cl.remote.setAgentBorder(observing ? "yellow" : "pink").catch(() => {});
+    }
+  }, [agent.state.status, observing]);
 
   useInput((_input, key) => {
     if (key.tab) {

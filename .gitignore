@@ -3,5 +3,4 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .floweb/
-.reference/
 .ref/
