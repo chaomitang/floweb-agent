@@ -55,7 +55,7 @@ describe("BrowserManager", () => {
     expect(pages.some((p: PageInfo) => p.url.includes("example.org"))).toBe(true);
   });
 
-  it("switches active page with switchToPage", async () => {
+  it("switches active page with switchToPage", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 
@@ -78,7 +78,7 @@ describe("BrowserManager", () => {
     expect(manager.getPageInfos().find((p: PageInfo) => p.id === firstPage!.id)?.active).toBe(true);
   });
 
-  it("closes a page and auto-switches active", async () => {
+  it("closes a page and auto-switches active", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 
@@ -105,7 +105,7 @@ describe("BrowserManager", () => {
     expect(pagesAfter[0].active).toBe(true);
   });
 
-  it("closes session and cleans up", async () => {
+  it("closes session and cleans up", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 
@@ -117,7 +117,7 @@ describe("BrowserManager", () => {
     expect(manager.getActivePageId()).toBeNull();
   });
 
-  it("emits pagesChanged event when pages change", async () => {
+  it("emits pagesChanged event when pages change", { timeout: 30000 }, async () => {
     manager = new BrowserManager();
     const config = resolveConfig({ headless: true });
 

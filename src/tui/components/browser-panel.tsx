@@ -31,8 +31,23 @@ function roleColor(role?: string): string | undefined {
   return undefined;
 }
 
-function isResult(a: ActionLogEntry): boolean {
-  return a.type === "snapshot" || a.type === "diff" || a.type === "exec" || a.type === "evaluate" || a.type === "observe" || a.type === "summary";
+function actionName(type: ActionLogEntry["type"]): string {
+  switch (type) {
+    case "navigate": return "navigate";
+    case "snapshot": return "snapshot";
+    case "diff":     return "diff";
+    case "click":    return "click";
+    case "type":     return "type";
+    case "press":    return "press";
+    case "close":    return "close";
+    case "switch":   return "switch";
+    case "observe":  return "observe";
+    case "evaluate": return "evaluate";
+    case "exec":     return "exec";
+    case "hover":    return "hover";
+    case "scroll":   return "scroll";
+    case "summary":  return "summary";
+  }
 }
 
 export function BrowserPanel({
@@ -87,15 +102,23 @@ export function BrowserPanel({
           {actions.map((a, i) => {
             const lines = a.detail.split("\n");
             const color = roleColor(a.role);
-            const result = isResult(a);
-            const prefix = result ? "  " : actionPrefix(a);
-            const contPad = " ".repeat(prefix.length);
+            const role = a.role === "agent" ? "agent" : "user";
+            const name = actionName(a.type);
+            // 第一行 detail = 参数（拼在 action 行后面）
+            const param = lines[0]?.slice(0, 60) ?? "";
+            const prefix = `[${role}] ${name} ${param}`;
+            // 其余行 = 结果（换行 dim 显示，最多 20 行）
+            const resultLines = lines.slice(1, 21);
             return (
               <Box key={i} flexDirection="column">
-                {lines.map((line, j) => (
+                <Box flexDirection="row">
+                  <Text color={color}>{prefix}</Text>
+                  {lines.length === 0 && <Text dimColor>(no output)</Text>}
+                </Box>
+                {resultLines.map((line, j) => (
                   <Box key={j} flexDirection="row">
-                    <Text color={color}>{j === 0 ? prefix : contPad}</Text>
-                    <Text>{line.slice(0, 120)}</Text>
+                    <Text>{" ".repeat(4)}</Text>
+                    <Text dimColor>{line.slice(0, 120)}</Text>
                   </Box>
                 ))}
               </Box>
@@ -105,29 +128,4 @@ export function BrowserPanel({
       ) : null}
     </Box>
   );
-}
-
-function actionPrefix(a: ActionLogEntry): string {
-  const role = a.role === "agent" ? "agent" : "user";
-  const action = actionName(a.type);
-  return `[${role}] ${action} `;
-}
-
-function actionName(type: ActionLogEntry["type"]): string {
-  switch (type) {
-    case "navigate": return "navigate";
-    case "snapshot": return "snapshot";
-    case "diff":     return "diff";
-    case "click":    return "click";
-    case "type":     return "type";
-    case "press":    return "press";
-    case "close":    return "close";
-    case "switch":   return "switch";
-    case "observe":  return "observe";
-    case "evaluate": return "evaluate";
-    case "exec":     return "exec";
-    case "hover":    return "hover";
-    case "scroll":   return "scroll";
-    case "summary":  return "summary";
-  }
 }

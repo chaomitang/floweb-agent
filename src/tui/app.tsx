@@ -332,26 +332,23 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
             const newPages = pages.filter((p) => !prevPages.find((pp) => pp.id === p.id));
             for (const np of newPages) {
               if (np.url && np.url !== "about:blank") {
-                const detail = `Opened ${np.url}`;
-                cl?.remote.recordAction("navigate", detail).catch(() => {});
-                addMessage({ role: "user", content: detail });
+                cl?.remote.recordAction("navigate", np.url).catch(() => {});
+                addMessage({ role: "user", content: `Opened ${np.url}` });
               }
             }
           } else if (pages.length < prevPages.length) {
             const closed = prevPages.filter((p) => !pages.find((pp) => pp.id === p.id));
             for (const cp of closed) {
               const label = cp.title && cp.title !== "Loading..." ? cp.title : cp.url;
-              const detail = `Closed ${label}`;
-              cl?.remote.recordAction("close_tab", detail).catch(() => {});
-              addMessage({ role: "user", content: detail });
+              cl?.remote.recordAction("close_tab", label).catch(() => {});
+              addMessage({ role: "user", content: `Closed ${label}` });
             }
           } else {
             for (const p of pages) {
               const prev = prevPages.find((pp) => pp.id === p.id);
               if (prev && prev.title !== p.title && p.title !== "Loading...") {
-                const detail = `Loaded ${p.title?.slice(0, 50)}`;
-                cl?.remote.recordAction("navigate", detail).catch(() => {});
-                addMessage({ role: "user", content: detail });
+                cl?.remote.recordAction("navigate", p.title?.slice(0, 50)).catch(() => {});
+                addMessage({ role: "user", content: `Loaded ${p.title?.slice(0, 50)}` });
               }
             }
           }

@@ -6,6 +6,8 @@ export interface DiffEntry {
   role?: string;
   name?: string;
   oldName?: string;
+  tag?: string;
+  attributes?: Record<string, string>;
   children?: DiffEntry[];
 }
 
@@ -13,33 +15,24 @@ const MAX_DIFF_CHILDREN_PER_PARENT = 4;
 
 // ── diff algorithm ─────────────────────────────────────────────────
 
-export function diffSnapshots(
-  before: PageSnapshot,
-  after: PageSnapshot,
-): DiffEntry[] {
-  return diffNodes(before.root, after.root);
+export function diffSnapshots(before: PageSnapshot, after: PageSnapshot): DiffEntry[] {
+  return diffChildren(before.root.children, after.root.children);
 }
 
 function diffNodes(
   before: SnapshotNode | undefined,
   after: SnapshotNode | undefined,
 ): DiffEntry[] {
-  // Added (entire subtree is new)
   if (!before && after) {
-    const result: DiffEntry[] = [
-      { type: "added", ref: after.ref, role: after.role, name: after.name },
-    ];
+    const result: DiffEntry[] = [nodeToEntry("added", after)];
     for (const child of after.children) {
       result.push(...diffNodes(undefined, child));
     }
     return result;
   }
 
-  // Removed (entire subtree is gone)
   if (before && !after) {
-    const result: DiffEntry[] = [
-      { type: "removed", ref: before.ref, role: before.role, name: before.name },
-    ];
+    const result: DiffEntry[] = [nodeToEntry("removed", before)];
     for (const child of before.children) {
       result.push(...diffNodes(child, undefined));
     }
@@ -48,40 +41,23 @@ function diffNodes(
 
   if (!before || !after) return [];
 
-  // Modified (different fingerprint — same position in parent)
+  // Modified: different fingerprint
   if (before.fingerprint !== after.fingerprint) {
-    const entry: DiffEntry = {
-      type: "modified",
-      ref: after.ref,
-      role: after.role,
-      name: after.name,
-      oldName: before.name,
-    };
-    const childDiffs = diffChildren(before.children, after.children);
-    if (childDiffs.length > 0) entry.children = childDiffs;
+    const entry: DiffEntry = { ...nodeToEntry("modified", after), oldName: before.name };
+    const children = diffChildren(before.children, after.children);
+    if (children.length > 0) entry.children = children;
     return [entry];
   }
 
-  // Same fingerprint — no self-change, but children may differ
-  const childDiffs = diffChildren(before.children, after.children);
-  if (childDiffs.length > 0) {
-    return [
-      {
-        type: "context",
-        ref: before.ref,
-        role: before.role,
-        name: before.name,
-        children: childDiffs,
-      },
-    ];
+  // Same fingerprint — check children
+  const children = diffChildren(before.children, after.children);
+  if (children.length > 0) {
+    return [{ ...nodeToEntry("context", after), children }];
   }
 
   return [];
 }
 
-// Three-tier child matching: positional → key (ref) → fingerprint.
-// This correctly handles list reordering, insertions, and deletions
-// where simple index-based comparison would report everything as changed.
 function diffChildren(
   beforeChildren: SnapshotNode[],
   afterChildren: SnapshotNode[],
@@ -94,17 +70,13 @@ function diffChildren(
     const beforeIdx = findMatchingBefore(after, afterIdx, beforeChildren, usedBefore);
 
     if (beforeIdx === -1) {
-      // No match — this child is newly added
       diffs.push(...diffNodes(undefined, after));
     } else {
       usedBefore.add(beforeIdx);
-      const before = beforeChildren[beforeIdx]!;
-      const childResult = diffNodes(before, after);
-      diffs.push(...childResult);
+      diffs.push(...diffNodes(beforeChildren[beforeIdx]!, after));
     }
   }
 
-  // Remaining unmatched before children are removed
   for (let beforeIdx = 0; beforeIdx < beforeChildren.length; beforeIdx++) {
     if (!usedBefore.has(beforeIdx)) {
       diffs.push(...diffNodes(beforeChildren[beforeIdx]!, undefined));
@@ -120,25 +92,30 @@ function findMatchingBefore(
   beforeChildren: SnapshotNode[],
   usedBefore: Set<number>,
 ): number {
-  // Tier 1: Same position + same role (most common case)
+  // Tier 1: same position + same role
   const samePos = beforeChildren[afterIdx];
   if (samePos && !usedBefore.has(afterIdx) && samePos.role === after.role) {
     return afterIdx;
   }
-
-  // Tier 2: Same ref (key-based — survives reordering)
+  // Tier 2: same ref
   if (after.ref) {
-    const byRef = beforeChildren.findIndex(
-      (b, i) => !usedBefore.has(i) && b.ref === after.ref,
-    );
+    const byRef = beforeChildren.findIndex((b, i) => !usedBefore.has(i) && b.ref === after.ref);
     if (byRef !== -1) return byRef;
   }
-
-  // Tier 3: Same fingerprint (content-based — survives ref reassignment)
-  const byFp = beforeChildren.findIndex(
-    (b, i) => !usedBefore.has(i) && b.fingerprint === after.fingerprint,
-  );
+  // Tier 3: same fingerprint
+  const byFp = beforeChildren.findIndex((b, i) => !usedBefore.has(i) && b.fingerprint === after.fingerprint);
   return byFp;
+}
+
+function nodeToEntry(type: DiffEntry["type"], node: SnapshotNode): DiffEntry {
+  return {
+    type,
+    ref: node.ref,
+    role: node.role,
+    name: node.name,
+    tag: node.tag,
+    attributes: node.attributes,
+  };
 }
 
 // ── rendering ──────────────────────────────────────────────────────
@@ -149,20 +126,12 @@ export function renderDiff(entries: DiffEntry[]): string {
   return lines.length > 0 ? lines.join("\n") : "(no changes)";
 }
 
-function renderDiffs(
-  entries: DiffEntry[],
-  depth: number,
-  lines: string[],
-): void {
+function renderDiffs(entries: DiffEntry[], depth: number, lines: string[]): void {
   const shown = entries.slice(0, MAX_DIFF_CHILDREN_PER_PARENT);
   const truncated = entries.slice(MAX_DIFF_CHILDREN_PER_PARENT);
-
-  for (const entry of shown) {
-    renderEntry(entry, depth, lines);
-  }
-
+  for (const entry of shown) renderEntry(entry, depth, lines);
   if (truncated.length > 0) {
-    const indent = "  ".repeat(depth);
+    const indent = "\t".repeat(depth);
     const added = truncated.filter((e) => e.type === "added").length;
     const removed = truncated.filter((e) => e.type === "removed").length;
     const modified = truncated.filter((e) => e.type === "modified").length;
@@ -170,49 +139,44 @@ function renderDiffs(
     if (added) parts.push(`+${added}`);
     if (removed) parts.push(`-${removed}`);
     if (modified) parts.push(`~${modified}`);
-    lines.push(`${indent}[Truncated ${truncated.length} more changes (${parts.join(" ")})]`);
+    lines.push(`${indent}[${truncated.length} more changes (${parts.join(" ")})]`);
   }
 }
 
 function renderEntry(entry: DiffEntry, depth: number, lines: string[]): void {
-  const indent = "  ".repeat(depth);
-  const label = entry.name ? ` "${entry.name.slice(0, 60)}"` : "";
+  const indent = "\t".repeat(depth);
+  const tag = entry.tag || entry.role || "?";
+  const name = entry.name ? ` "${entry.name.slice(0, 60)}"` : "";
+  const attrStr = entry.attributes
+    ? " " + Object.entries(entry.attributes).filter(([, v]) => v).map(([k, v]) => `${k}="${v}"`).join(" ")
+    : "";
 
   switch (entry.type) {
     case "added":
-      lines.push(`${indent}+ <${entry.role}>${label}`);
+      lines.push(`${indent}+[${entry.ref}]<${tag}${attrStr}>${name} />`);
       if (entry.children) renderDiffs(entry.children, depth + 1, lines);
       break;
 
     case "removed":
-      // Compact: only show ref for removed nodes, skip full children
       if (entry.ref) {
-        lines.push(`${indent}- <${entry.role} [${entry.ref}]>...</${entry.role}>`);
+        lines.push(`${indent}-[${entry.ref}]<${tag}${attrStr}> "..." />`);
       } else {
-        lines.push(`${indent}- <${entry.role}>${label}</${entry.role}>`);
-      }
-      // Still recurse into children in case there are nested removed refs worth noting
-      if (entry.children) {
-        for (const child of entry.children) {
-          if (child.type === "removed" && child.ref) {
-            lines.push(`${indent}  - <${child.role} [${child.ref}]>...</${child.role}>`);
-          }
-        }
+        lines.push(`${indent}-<${tag}${attrStr}>${name} />`);
       }
       break;
 
-    case "modified":
-      lines.push(
-        `${indent}~ <${entry.role}>${label} (was "${(entry.oldName ?? "").slice(0, 60)}")`,
-      );
+    case "modified": {
+      const old = entry.oldName ? ` (was "${entry.oldName.slice(0, 40)}")` : "";
+      lines.push(`${indent}~[${entry.ref}]<${tag}${attrStr}>${name}${old} />`);
       if (entry.children) renderDiffs(entry.children, depth + 1, lines);
       break;
+    }
 
     case "context":
       if (entry.children && entry.children.length > 0) {
-        lines.push(`${indent}  <${entry.role}>${label}`);
+        lines.push(`${indent}[${entry.ref}]<${tag}${attrStr}>${name}`);
         renderDiffs(entry.children, depth + 1, lines);
-        lines.push(`${indent}  </${entry.role}>`);
+        lines.push(`${indent}</${tag}>`);
       }
       break;
   }

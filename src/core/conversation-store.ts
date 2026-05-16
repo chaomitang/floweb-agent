@@ -39,7 +39,8 @@ export function loadContextPrompt(sessionDir: string): string | null {
   return [
     "[Previous conversation from last session — you already know this user:]",
     ...lines,
-    "[End of previous conversation. Continue naturally — do NOT replay the history, just respond to the current message with full context awareness.]",
+    "[End of previous conversation.]",
+    "[IMPORTANT: This is a new session. The browser state may be completely different from the previous conversation — DO NOT assume any pages are still open. Always check the current page state with browser_snapshot before making claims about what page you are on.]",
   ].join("\n");
 }
 

@@ -9,9 +9,9 @@ description: 浏览器自动化 + Spec 驱动开发。导航页面、抓取快�
 
 ### 核心工作流
 
-1. **先 snapshot** → `browser_snapshot` 查看页面结构和可交互元素
+1. **先 snapshot** → `browser_snapshot` 查看页面结构和可交互元素（`*` 标记 = 新出现/变化）
 2. **再操作** → `browser_click`、`browser_type`、`browser_press`、`browser_navigate`
-3. **后验证** → `browser_snapshot_diff` 查看变化（+新增、-删除、~修改）
+3. **后验证** → 再次 `browser_snapshot`，看 `*` 标记确认效果；需要细节时用 `browser_snapshot_diff`（+新增、-删除、~修改）
 4. **最终产出** → 验证过的 Playwright 脚本
 
 ### 工作规则

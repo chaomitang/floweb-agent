@@ -90,17 +90,17 @@ export class DaemonServer {
       getActivePageId: () => this.browserManager.getActivePageId(),
 
       switchToPage: (pageId: string) => {
-        this.logAction("switch_tab", `Switch to ${pageId}`);
+        this.logAction("switch_tab", pageId);
         this.browserManager.switchToPage(pageId);
       },
 
       closePage: (pageId: string) => {
-        this.logAction("close_tab", `Close ${pageId}`);
+        this.logAction("close_tab", pageId);
         return this.browserManager.closePage(pageId);
       },
 
       createSession: async (url: string) => {
-        this.logAction("navigate", `Open ${url}`);
+        this.logAction("navigate", url);
         await this.browserManager.createSession(this.config, url);
         // 新会话默认粉色边框，标识 TUI-daemon 连接已就绪
         await this.browserManager.setAgentBorder("pink");
@@ -171,15 +171,12 @@ export class DaemonServer {
         return this.browserManager.compactHTML();
       },
       execCode: async (code: string) => {
+        this.logAction("exec", code);
         const result = await this.guard(() => this.browserManager.execCode(code));
-        const detail = [code.slice(0, 200), result.output || "(no output)", result.diff || ""]
-          .filter(Boolean).join("\n");
-        this.logAction("exec", detail);
         return result;
       },
       snapshotActive: async () => {
         const result = await this.browserManager.snapshotActive();
-        // renderSnapshot already includes Title + URL, so just use result.text
         this.logAction("snapshot", result.text);
         return result;
       },
@@ -192,9 +189,8 @@ export class DaemonServer {
         return result;
       },
       evaluate: async (js: string) => {
+        this.logAction("evaluate", js);
         const result = await this.guard(() => this.browserManager.evaluate(js));
-        const json = JSON.stringify(result);
-        this.logAction("evaluate", `${js.slice(0, 100)}\n${json.slice(0, 400)}`);
         return result;
       },
       moveCursor: (x: number, y: number) => {
@@ -231,15 +227,15 @@ export class DaemonServer {
         return this.browserManager.screenshot();
       },
       goBack: () => {
-        this.logAction("navigate", "Back");
+        this.logAction("navigate", "back");
         return this.browserManager.goBack();
       },
       goForward: () => {
-        this.logAction("navigate", "Forward");
+        this.logAction("navigate", "forward");
         return this.browserManager.goForward();
       },
       reloadPage: () => {
-        this.logAction("navigate", "Reload");
+        this.logAction("navigate", "reload");
         return this.browserManager.reloadPage();
       },
       saveProfile: (domain: string) => {
