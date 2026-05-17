@@ -139,6 +139,9 @@ export class AgentRuntime {
               case "browser_reload":
                 await remote.reloadPage();
                 break;
+              case "browser_ask_human":
+                await remote.setObservingMode(true);
+                break;
               default:
                 throw new Error(`Unknown spec action tool: ${tool}`);
             }

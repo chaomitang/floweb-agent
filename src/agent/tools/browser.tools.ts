@@ -480,6 +480,24 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     },
   );
 
+  const askHuman = tool(
+    async ({ message }: { message: string }) => {
+      await client().remote.setObservingMode(true);
+      return `⏸ 已暂停并开启观察模式: ${message}\n\n请在浏览器中完成操作，完成后在对话中告诉我继续。`;
+    },
+    {
+      name: "browser_ask_human",
+      description:
+        "暂停自动化操作，请求用户手动在浏览器中操作。用于登录、验证码、反爬等需要人工介入的场景。" +
+        "调用后 agent 进入观察模式并暂停当前 turn。用户直接在浏览器窗口中操作（密码等敏感信息不会经过 agent/LLM），" +
+        "操作完成后用户在对话中告知 agent，agent 应调用 browser_set_observing(false) 退出观察并通过 browser_snapshot_diff 分析变化。" +
+        "在生成 spec 和脚本时，此工具对应人工检查点（checkpoint），需要用户手动介入。",
+      schema: z.object({
+        message: z.string().describe("向用户展示的提示信息，说明需要在浏览器中完成什么操作"),
+      }),
+    },
+  );
+
   return [
     // ── Navigation ──
     navigate,
@@ -518,5 +536,6 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     screenshot,
     compactHTML,
     setObserving,
+    askHuman,
   ];
 }

@@ -362,6 +362,33 @@ async function main() {
       console.log(`Observation mode ${onOff === "on" ? "enabled" : "disabled"}`);
     });
 
+  // ── ask-human ──
+  program.commands.find((c) => c.name() === "ask-human")!
+    .action(async (messageParts: string[]) => {
+      const message = messageParts?.join(" ") ?? "Please complete the action manually.";
+      const s = sp(opts().session, opts());
+      const { createInterface } = await import("node:readline");
+      await withDaemon(s, async (c) => {
+        await c.remote.setObservingMode(true);
+        console.log(`⏸ ${message}`);
+        console.log("Press Enter when done...");
+      });
+      // readline outside withDaemon so the daemon connection doesn't hold open
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      await new Promise<void>((resolve) => {
+        rl.question("", () => { rl.close(); resolve(); });
+      });
+      await withDaemon(s, async (c) => {
+        await c.remote.setObservingMode(false);
+        const result = await c.remote.snapshotDiff();
+        if (result.diff) {
+          console.log("\n--- Diff ---");
+          console.log(result.diff);
+        }
+        console.log("Done.");
+      });
+    });
+
   // ── tui ──
   program.commands.find((c) => c.name() === "tui")!
     .action(async (sessionName?: string) => {

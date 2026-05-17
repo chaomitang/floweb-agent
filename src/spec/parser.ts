@@ -238,7 +238,27 @@ export function parseSpec(raw: string, path?: string): Spec {
   const getSection = (key: string): string =>
     (sectionContents[key] ?? []).join("\n").trim();
 
-  const phases: SpecPhase[] = [];
+  // Also accept ## Phase N: as a top-level section header (for LLM-generated specs)
+  // Extract the title from the section key ("phase 1: 打开 apple 中国官网" → "打开 Apple 中国官网")
+  // and prepend a synthetic "### Phase N: title" line so parsePhase can handle it.
+  const PHASE_SECTION_RE = /^phase (\d+): (.*)$/;
+  const phaseSectionKeys = Object.keys(sectionContents).filter((k) => PHASE_SECTION_RE.test(k));
+  const phaseSectionPhases: SpecPhase[] = [];
+  for (const phaseKey of phaseSectionKeys) {
+    const match = phaseKey.match(PHASE_SECTION_RE);
+    if (!match) continue;
+    const title = match[2];
+    const contentLines = sectionContents[phaseKey];
+    const syntheticHeader = `### Phase ${match[1]}: ${title}`;
+    const phaseLines = [syntheticHeader, ...contentLines];
+    const parsed = parsePhase(phaseLines, 0);
+    if (parsed) {
+      phaseSectionPhases.push(parsed.phase);
+    }
+    delete sectionContents[phaseKey];
+  }
+
+  const phases: SpecPhase[] = [...phaseSectionPhases];
   const implContent = sectionContents["implementation"] ?? [];
   for (let i = 0; i < implContent.length; i++) {
     const parsed = parsePhase(implContent, i);

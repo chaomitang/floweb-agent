@@ -247,6 +247,15 @@ export function getMcpTools(): McpTool[] {
         required: ["observing"],
       },
     },
+    {
+      name: "browser_ask_human",
+      description: "Pause automation and ask the user to manually intervene in the browser. Use for login walls, CAPTCHAs, anti-bot verification, or any step requiring human interaction. Enables observation mode and returns a message — the external agent should present it to the user and wait. The user operates the browser directly (passwords never go through the LLM). When the user says they're done, call browser_set_observing(false) then browser_snapshot_diff.",
+      inputSchema: {
+        type: "object",
+        properties: { message: { type: "string", description: "Message to show the user explaining what to do in the browser" } },
+        required: ["message"],
+      },
+    },
   ];
 }
 
@@ -421,6 +430,18 @@ export async function callTool(
       await remote.setObservingMode(args.observing as boolean);
       text = (args.observing as boolean) ? "Observation mode enabled" : "Observation mode disabled";
       break;
+    case "browser_ask_human": {
+      const askMsg = args.message as string;
+      await remote.setObservingMode(true);
+      text = [
+        `⏸ ${askMsg}`,
+        ``,
+        `Observation mode enabled. The user should now operate the browser directly.`,
+        `Passwords and sensitive info are entered in the browser, never through the LLM.`,
+        `When the user says they are done, call browser_set_observing(false) then browser_snapshot_diff.`,
+      ].join("\n");
+      break;
+    }
     default:
       text = `Unknown tool: ${name}`;
   }

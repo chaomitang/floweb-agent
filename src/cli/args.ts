@@ -114,6 +114,9 @@ export function createProgram(): Command {
   program
     .command("observe <on|off>")
     .description("进入/退出观察模式");
+  program
+    .command("ask-human <message...>")
+    .description("暂停自动化，请求用户手动介入（登录、验证码等）。开启观察模式，阻塞等待 Enter，关闭观察模式后打印 diff。");
 
   // ── 便捷命令 ──
   program
