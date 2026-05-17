@@ -103,6 +103,9 @@ export class AgentRuntime {
             const remote = this.client!.remote;
             const url = args.url as string | undefined;
             switch (tool) {
+              case "browser_start_session":
+                if (url) await remote.createSession(url);
+                break;
               case "browser_navigate":
                 if (url) await remote.navigate(url);
                 break;

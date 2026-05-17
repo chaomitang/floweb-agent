@@ -101,6 +101,21 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     },
   );
 
+  const startSession = tool(
+    async ({ url }: { url: string }) => {
+      const normalized = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)
+        ? url
+        : `https://${url}`;
+      const result = await client().remote.createSession(normalized);
+      return withDiff(`Browser session started at ${normalized}`, result);
+    },
+    {
+      name: "browser_start_session",
+      description: "启动新的浏览器会话并导航到指定 URL。当 browser_snapshot 返回 No active page 时使用此工具。支持完整 URL 和简写（example.com），自动补全 https://。",
+      schema: z.object({ url: z.string().describe("要打开的 URL 地址") }),
+    },
+  );
+
   const closeSession = tool(
     async () => {
       await client().remote.closeSession();
@@ -488,6 +503,7 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     // ── Tab Management ──
     switchTab,
     closeTab,
+    startSession,
     closeSession,
     // ── Execution ──
     evaluate,
