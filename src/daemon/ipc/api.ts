@@ -8,7 +8,8 @@ export interface DaemonApi {
   getActivePageId(): string | null;
   switchToPage(pageId: string): void;
   closePage(pageId: string): void;
-  createSession(url: string): void;
+  createSession(url: string): { diff: string };
+  navigate(url: string): { diff: string };
   closeSession(): void;
   resetSessionData(): void;
   recordAction(type: string, detail: string): void;
@@ -31,17 +32,20 @@ export interface DaemonApi {
   moveCursor(x: number, y: number): void;
   highlightElement(selector: string): void;
   setAgentBorder(color: "pink" | "yellow"): void;
-  click(selector: string): void;
-  typeText(selector: string, text: string): void;
-  select(selector: string, value: string): void;
+  click(selector: string): { diff: string };
+  typeText(selector: string, text: string): { diff: string };
+  select(selector: string, value: string): { diff: string };
   waitFor(ms?: number, selector?: string): void;
-  pressKey(key: string): void;
-  hover(selector: string): void;
-  scroll(x: number, y: number): void;
+  pressKey(key: string): { diff: string };
+  hover(selector: string): { diff: string };
+  scroll(x: number, y: number): { diff: string };
   screenshot(): string;
-  goBack(): void;
-  goForward(): void;
-  reloadPage(): void;
+  goBack(): { diff: string };
+  goForward(): { diff: string };
+  reloadPage(): { diff: string };
+  // Checkpoints
+  saveCheckpoint(args: { phaseIndex: number; phaseTitle: string }): import("../../core/browser/checkpoint.js").Checkpoint;
+  getCheckpoints(): import("../../core/browser/checkpoint.js").Checkpoint[];
   // Session control
   saveProfile(domain: string): void;
   shutdown(): void;

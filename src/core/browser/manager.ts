@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright";
 import type { FlowebConfig } from "../config.js";
+import { getSessionDir } from "../config.js";
 import type { PageInfo } from "../types.js";
 import { captureSnapshot, renderSnapshot } from "./snapshot.js";
 import { diffSnapshots, renderDiff } from "./snapshot-diff.js";
@@ -10,6 +11,7 @@ import { DaemonExecRepl } from "./exec-repl.js";
 import { compactHTML } from "./compact-html.js";
 import { moveCursor, highlightElement, setBorderColor, installScript, highlightStyle as highlightCSS } from "./visual-feedback.js";
 import type { PageSnapshot } from "./snapshot.js";
+import { CheckpointStore, type Checkpoint } from "./checkpoint.js";
 
 export const BrowserManagerEvents = {
   PAGES_CHANGED: "pagesChanged",
@@ -26,6 +28,7 @@ export class BrowserManager extends EventEmitter {
   private lastSnapshot: PageSnapshot | null = null;
   private borderColor: "pink" | "yellow" = "pink";
   private repl = new DaemonExecRepl();
+  checkpoints = new CheckpointStore();
 
   getPageInfos(): PageInfo[] {
     return Array.from(this.pageInfos.values());
@@ -183,6 +186,9 @@ export class BrowserManager extends EventEmitter {
 
     const initialPage = await this.context.newPage();
     // registerPage is called automatically via context.on("page")
+
+    this.checkpoints.start(getSessionDir(config));
+
     try {
       await initialPage.goto(url, { timeout: 15000 });
     } catch (err) {
@@ -206,6 +212,7 @@ export class BrowserManager extends EventEmitter {
       this.browser = null;
       this.context = null;
     }
+    this.checkpoints.stop();
     this.emit(BrowserManagerEvents.PAGES_CHANGED, this.getPageInfos(), this.activePageId);
     this.emit(BrowserManagerEvents.STATUS_CHANGED, "disconnected");
   }
@@ -332,26 +339,70 @@ export class BrowserManager extends EventEmitter {
     return page.evaluate(js);
   }
 
-  async click(selector: string): Promise<void> {
+  // ── Operation diff helper ──────────────────────────────────────────
+  // Captures snapshot before/after an operation and returns a rendered diff.
+  // Follows the same pattern as execCode.
+
+  private async captureOperationDiff<T>(
+    operation: (page: Page) => Promise<T>,
+  ): Promise<{ result: T; diff: string }> {
     const page = this.getActivePage();
     if (!page) throw new Error("No active page");
-    // Visual feedback: move cursor + highlight before click
-    await this.showVisualFeedback(page, selector);
-    await page.click(selector, { timeout: 10000 });
+
+    let beforeSnap: PageSnapshot | null = null;
+    try {
+      beforeSnap = await captureSnapshot(page);
+    } catch {
+      // best-effort before capture
+    }
+
+    const result = await operation(page);
+
+    let diff = "";
+    try {
+      await this.waitForStable(5000).catch(() => {});
+      const afterSnap = await captureSnapshot(page);
+      if (beforeSnap && afterSnap) {
+        const entries = diffSnapshots(beforeSnap, afterSnap);
+        diff = renderDiff(entries);
+      }
+      this.lastSnapshot = afterSnap;
+    } catch {
+      // best-effort diff
+    }
+
+    return { result, diff };
   }
 
-  async typeText(selector: string, text: string): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await this.showVisualFeedback(page, selector);
-    await page.fill(selector, text, { timeout: 10000 });
+  async navigate(url: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.goto(url, { timeout: 15000 });
+    });
+    return { diff };
   }
 
-  async select(selector: string, value: string): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await this.showVisualFeedback(page, selector);
-    await page.selectOption(selector, value, { timeout: 10000 });
+  async click(selector: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await this.showVisualFeedback(page, selector);
+      await page.click(selector, { timeout: 10000 });
+    });
+    return { diff };
+  }
+
+  async typeText(selector: string, text: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await this.showVisualFeedback(page, selector);
+      await page.fill(selector, text, { timeout: 10000 });
+    });
+    return { diff };
+  }
+
+  async select(selector: string, value: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await this.showVisualFeedback(page, selector);
+      await page.selectOption(selector, value, { timeout: 10000 });
+    });
+    return { diff };
   }
 
   async waitFor(ms?: number, selector?: string): Promise<void> {
@@ -381,22 +432,25 @@ export class BrowserManager extends EventEmitter {
     }
   }
 
-  async pressKey(key: string): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.keyboard.press(key);
+  async pressKey(key: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.keyboard.press(key);
+    });
+    return { diff };
   }
 
-  async hover(selector: string): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.hover(selector);
+  async hover(selector: string): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.hover(selector);
+    });
+    return { diff };
   }
 
-  async scroll(x: number, y: number): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
+  async scroll(x: number, y: number): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x, y });
+    });
+    return { diff };
   }
 
   async screenshot(): Promise<string> {
@@ -427,22 +481,25 @@ export class BrowserManager extends EventEmitter {
     await setBorderColor(page, color);
   }
 
-  async goBack(): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.goBack();
+  async goBack(): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.goBack();
+    });
+    return { diff };
   }
 
-  async goForward(): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.goForward();
+  async goForward(): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.goForward();
+    });
+    return { diff };
   }
 
-  async reloadPage(): Promise<void> {
-    const page = this.getActivePage();
-    if (!page) throw new Error("No active page");
-    await page.reload();
+  async reloadPage(): Promise<{ diff: string }> {
+    const { diff } = await this.captureOperationDiff(async (page) => {
+      await page.reload();
+    });
+    return { diff };
   }
 
   async saveProfile(domain: string): Promise<{ domain: string; cookies: Array<{ name: string; value: string; domain: string; path: string }>; localStorage: Record<string, string>; savedAt: string }> {

@@ -106,6 +106,12 @@ export class DaemonServer {
         await this.browserManager.createSession(this.config, url);
         // 新会话默认粉色边框，标识 TUI-daemon 连接已就绪
         await this.browserManager.setAgentBorder("pink");
+        return { diff: "" };
+      },
+
+      navigate: async (url: string) => {
+        this.logAction("navigate", url);
+        return this.guard(() => this.browserManager.navigate(url));
       },
 
       closeSession: () => {
@@ -158,6 +164,25 @@ export class DaemonServer {
       },
 
       getSessionName: () => this.config.sessionName,
+
+      saveCheckpoint: (args: { phaseIndex: number; phaseTitle: string }) => {
+        this.logAction("checkpoint", `save phase ${args.phaseIndex}: ${args.phaseTitle}`);
+        const page = this.browserManager.getActivePage();
+        const checkpoint = {
+          phaseIndex: args.phaseIndex,
+          phaseTitle: args.phaseTitle,
+          url: page?.url() ?? "",
+          snapshotText: "",
+          recordingSeq: 0,
+          timestamp: new Date().toISOString(),
+        };
+        this.browserManager.checkpoints.save(checkpoint);
+        return checkpoint;
+      },
+
+      getCheckpoints: () => {
+        return this.browserManager.checkpoints.list();
+      },
 
       listSessions: () => listSessions(this.config.sessionDir),
 

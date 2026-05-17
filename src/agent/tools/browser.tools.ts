@@ -2,6 +2,11 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { DaemonClient } from "@/daemon/ipc/client.js";
 
+function withDiff(base: string, result: { diff: string } | undefined): string {
+  if (!result?.diff) return base;
+  return `${base}\n--- Diff ---\n${result.diff}`;
+}
+
 export function createBrowserTools(getClient: () => DaemonClient | null) {
   const client = () => {
     const c = getClient();
@@ -17,12 +22,12 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
       const normalized = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)
         ? url
         : `https://${url}`;
-      await client().remote.createSession(normalized);
-      return `Opened ${normalized}`;
+      const result = await client().remote.navigate(normalized);
+      return withDiff(`Navigated to ${normalized}`, result);
     },
     {
       name: "browser_navigate",
-      description: "导航浏览器到指定 URL。支持完整 URL（https://example.com）和简写（example.com），自动补全 https://。也支持 about:blank 打开空白页。",
+      description: "导航当前页面到指定 URL（相当于在地址栏输入新地址）。支持完整 URL（https://example.com）和简写（example.com），自动补全 https://。如果还没有打开浏览器，请先使用 TUI 或 CLI 启动 session。",
       schema: z.object({ url: z.string().describe("要导航到的 URL 地址") }),
     },
   );
@@ -110,13 +115,13 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const click = tool(
     async ({ selector }: { selector: string }) => {
-      await client().remote.click(selector);
-      return `Clicked "${selector}"`;
+      const result = await client().remote.click(selector);
+      return withDiff(`Clicked "${selector}"`, result);
     },
     {
       name: "browser_click",
       description:
-        "点击当前页面上的元素。使用 CSS 选择器（如 'button.submit'、'#login'、'a[href=\"/search\"]'）。先运行 browser_snapshot 找到正确的选择器。",
+        "点击当前页面上的元素。使用 CSS 选择器（如 'button.submit'、'#login'、'a[href=\"/search\"]'）。先运行 browser_snapshot 找到正确的选择器。成功后自动返回页面变化 Diff。",
       schema: z.object({
         selector: z.string().describe("要点击元素的 CSS 选择器"),
       }),
@@ -125,13 +130,13 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const typeText = tool(
     async ({ selector, text }: { selector: string; text: string }) => {
-      await client().remote.typeText(selector, text);
-      return `Typed "${text}" into "${selector}"`;
+      const result = await client().remote.typeText(selector, text);
+      return withDiff(`Typed "${text}" into "${selector}"`, result);
     },
     {
       name: "browser_type",
       description:
-        "在输入框中输入文本。使用 CSS 选择器（如 'input[name=\"q\"]'、'#search'）。先运行 browser_snapshot 找到正确的选择器。",
+        "在输入框中输入文本。使用 CSS 选择器（如 'input[name=\"q\"]'、'#search'）。先运行 browser_snapshot 找到正确的选择器。成功后自动返回页面变化 Diff。",
       schema: z.object({
         selector: z.string().describe("输入元素的 CSS 选择器"),
         text: z.string().describe("要输入的文本内容"),
@@ -141,12 +146,12 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const pressKey = tool(
     async ({ key }: { key: string }) => {
-      await client().remote.pressKey(key);
-      return `Pressed "${key}"`;
+      const result = await client().remote.pressKey(key);
+      return withDiff(`Pressed "${key}"`, result);
     },
     {
       name: "browser_press",
-      description: "按下键盘按键。使用键名如 'Enter'、'Escape'、'Tab'、'ArrowDown' 等。",
+      description: "按下键盘按键。使用键名如 'Enter'、'Escape'、'Tab'、'ArrowDown' 等。成功后自动返回页面变化 Diff。",
       schema: z.object({ key: z.string().describe("要按下的键名") }),
     },
   );
@@ -231,12 +236,12 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const hover = tool(
     async ({ selector }: { selector: string }) => {
-      await client().remote.hover(selector);
-      return `Hovered "${selector}"`;
+      const result = await client().remote.hover(selector);
+      return withDiff(`Hovered "${selector}"`, result);
     },
     {
       name: "browser_hover",
-      description: "将鼠标悬停在指定元素上。用于触发 tooltip、下拉菜单等。",
+      description: "将鼠标悬停在指定元素上。用于触发 tooltip、下拉菜单等。成功后自动返回页面变化 Diff。",
       schema: z.object({ selector: z.string().describe("CSS 选择器") }),
     },
   );
@@ -272,12 +277,12 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const scroll = tool(
     async ({ x, y }: { x: number; y: number }) => {
-      await client().remote.scroll(x, y);
-      return `Scrolled (${x}, ${y})`;
+      const result = await client().remote.scroll(x, y);
+      return withDiff(`Scrolled (${x}, ${y})`, result);
     },
     {
       name: "browser_scroll",
-      description: "滚动页面。x=水平像素，y=垂直像素（正数向下）。如 scroll(0, 500) 向下滚动 500px。",
+      description: "滚动页面。x=水平像素，y=垂直像素（正数向下）。如 scroll(0, 500) 向下滚动 500px。成功后自动返回页面变化 Diff。",
       schema: z.object({
         x: z.number().default(0).describe("水平滚动像素"),
         y: z.number().default(0).describe("垂直滚动像素"),
@@ -299,36 +304,36 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const goBack = tool(
     async () => {
-      await client().remote.goBack();
-      return "Navigated back";
+      const result = await client().remote.goBack();
+      return withDiff("Navigated back", result);
     },
     {
       name: "browser_back",
-      description: "浏览器后退到上一页。",
+      description: "浏览器后退到上一页。成功后自动返回页面变化 Diff。",
       schema: z.object({}),
     },
   );
 
   const goForward = tool(
     async () => {
-      await client().remote.goForward();
-      return "Navigated forward";
+      const result = await client().remote.goForward();
+      return withDiff("Navigated forward", result);
     },
     {
       name: "browser_forward",
-      description: "浏览器前进到下一页。",
+      description: "浏览器前进到下一页。成功后自动返回页面变化 Diff。",
       schema: z.object({}),
     },
   );
 
   const reload = tool(
     async () => {
-      await client().remote.reloadPage();
-      return "Page reloaded";
+      const result = await client().remote.reloadPage();
+      return withDiff("Page reloaded", result);
     },
     {
       name: "browser_reload",
-      description: "刷新当前页面。",
+      description: "刷新当前页面。成功后自动返回页面变化 Diff。",
       schema: z.object({}),
     },
   );
@@ -362,12 +367,12 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const selectOption = tool(
     async ({ selector, value }: { selector: string; value: string }) => {
-      await client().remote.select(selector, value);
-      return `Selected "${value}" in ${selector}`;
+      const result = await client().remote.select(selector, value);
+      return withDiff(`Selected "${value}" in ${selector}`, result);
     },
     {
       name: "browser_select",
-      description: "选择下拉框（<select>）中的选项。",
+      description: "选择下拉框（<select>）中的选项。成功后自动返回页面变化 Diff。",
       schema: z.object({
         selector: z.string().describe("select 元素的 CSS 选择器"),
         value: z.string().describe("选项的 value"),
@@ -389,6 +394,59 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
       description:
         "获取当前页面的紧凑 HTML。去除 <script>/<style> 内容、HTML 注释、base64 数据、非语义 CSS 类名、框架属性等，只保留语义结构和交互元素。适合 LLM 分析页面结构时使用，比完整 HTML 节省 70-90% token。",
       schema: z.object({}),
+    },
+  );
+
+  const assertCondition = tool(
+    async ({ condition, description, stopOnFail }: { condition: string; description: string; stopOnFail?: boolean }) => {
+      const result = await client().remote.execCode(`return (${condition});`);
+      const passed = Boolean(result.result);
+
+      if (passed) {
+        return [
+          `✓ PASS: ${description}`,
+          `  Condition: ${condition}`,
+        ].filter(Boolean).join("\n");
+      }
+
+      // On failure: capture page context for diagnosis
+      let contextInfo = "";
+      try {
+        const snap = await client().remote.snapshotActive();
+        const snapLines = snap.text.split("\n").slice(0, 12);
+        contextInfo = [
+          `  URL: ${snap.url}`,
+          `  Title: ${snap.title}`,
+          ...snapLines.map((l: string) => `  ${l}`),
+        ].join("\n");
+      } catch {
+        // best-effort
+      }
+
+      const lines = [
+        `✗ FAIL: ${description}`,
+        `  Expected: ${condition}`,
+        `  Actual:   ${JSON.stringify(result.result)}`,
+        contextInfo ? `\n${contextInfo}` : "",
+        "",
+        "Tip: Use browser_snapshot to inspect the full page.",
+      ];
+
+      const output = lines.join("\n");
+
+      if (stopOnFail !== false) {
+        throw new Error(output);
+      }
+      return output;
+    },
+    {
+      name: "browser_assert",
+      description: "验证当前页面是否满足某个条件。condition 是 Playwright JS 表达式（可用 page/context/browser 变量）。失败时返回 expected vs actual 对比和页面上下文。stopOnFail=false 时只记录失败不中断执行。",
+      schema: z.object({
+        condition: z.string().describe("要验证的条件，Playwright JS 表达式，如 page.url().includes('/dashboard')"),
+        description: z.string().describe("人类可读的断言描述，如 'navigated to dashboard after login'"),
+        stopOnFail: z.boolean().optional().default(true).describe("失败时是否中断执行，默认 true"),
+      }),
     },
   );
 
@@ -434,6 +492,7 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
     // ── Execution ──
     evaluate,
     exec,
+    assertCondition,
     // ── Network & Auth ──
     intercept,
     loadProfile,

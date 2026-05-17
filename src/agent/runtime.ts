@@ -10,7 +10,7 @@ import type { SkillRegistry } from "../skills/registry.js";
 import type { AgentConfig, AgentState, AgentStreamEvent } from "./types.js";
 import { buildSystemPrompt, buildObservationPrompt } from "./prompts.js";
 import { createBrowserTools } from "@/agent/tools/browser.tools.js";
-import { createSpecTools } from "@/agent/tools/spec.tools.js";
+import { createSpecTools, type SpecExecutor } from "@/agent/tools/spec.tools.js";
 import { createSkillTools } from "@/agent/tools/skill.tools.js";
 
 export class AgentRuntime {
@@ -95,7 +95,95 @@ export class AgentRuntime {
 
   private buildTools(): StructuredTool[] {
     const browserTools = createBrowserTools(() => this.client);
-    const specTools = createSpecTools(this.config.specsDir);
+
+    // Build spec executor that maps action tool names to daemon remote calls
+    const specExecutor: SpecExecutor | undefined = this.client
+      ? {
+          executeAction: async (tool: string, args: Record<string, unknown>) => {
+            const remote = this.client!.remote;
+            const url = args.url as string | undefined;
+            switch (tool) {
+              case "browser_navigate":
+                if (url) await remote.navigate(url);
+                break;
+              case "browser_click":
+                await remote.click(args.selector as string);
+                break;
+              case "browser_type":
+                await remote.typeText(args.selector as string, args.text as string);
+                break;
+              case "browser_press":
+                await remote.pressKey(args.key as string);
+                break;
+              case "browser_select":
+                await remote.select(args.selector as string, args.value as string);
+                break;
+              case "browser_hover":
+                await remote.hover(args.selector as string);
+                break;
+              case "browser_scroll":
+                await remote.scroll(args.x as number, args.y as number);
+                break;
+              case "browser_wait":
+                await remote.waitFor(args.ms as number | undefined, args.selector as string | undefined);
+                break;
+              case "browser_back":
+                await remote.goBack();
+                break;
+              case "browser_forward":
+                await remote.goForward();
+                break;
+              case "browser_reload":
+                await remote.reloadPage();
+                break;
+              default:
+                throw new Error(`Unknown spec action tool: ${tool}`);
+            }
+          },
+          executeAssert: async (condition: string, description: string, stopOnFail: boolean) => {
+            const remote = this.client!.remote;
+            const result = await remote.execCode(`return (${condition});`);
+            const passed = Boolean(result.result);
+
+            if (passed) {
+              return `✓ PASS: ${description}\n  Condition: ${condition}`;
+            }
+
+            // Capture page context for diagnosis
+            let contextInfo = "";
+            try {
+              const snap = await remote.snapshotActive();
+              const snapLines = snap.text.split("\n").slice(0, 15);
+              contextInfo = [
+                `  URL: ${snap.url}`,
+                `  Title: ${snap.title}`,
+                ...snapLines.map((l: string) => `  ${l}`),
+              ].join("\n");
+            } catch {
+              // best-effort
+            }
+
+            const output = [
+              `✗ FAIL: ${description}`,
+              `  Expected: ${condition}`,
+              `  Actual:   ${JSON.stringify(result.result)}`,
+              contextInfo ? `\n${contextInfo}` : "",
+              "",
+              "Check the previous actions for the root cause.",
+            ].join("\n");
+
+            if (stopOnFail) {
+              throw new Error(output);
+            }
+            return output;
+          },
+          saveCheckpoint: async (phaseIndex: number, phaseTitle: string) => {
+            await this.client!.remote.saveCheckpoint({ phaseIndex, phaseTitle });
+          },
+        }
+      : undefined;
+
+    const specTools = createSpecTools(this.config.specsDir, specExecutor);
     const skillTools = createSkillTools(() => this.registry);
     return [...browserTools, ...specTools, ...skillTools];
   }

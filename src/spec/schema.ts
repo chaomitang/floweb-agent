@@ -1,8 +1,24 @@
 import { z } from "zod";
 
+export const SpecActionSchema = z.object({
+  tool: z.string(),
+  args: z.record(z.string(), z.unknown()),
+});
+
+export type SpecAction = z.infer<typeof SpecActionSchema>;
+
+export const SpecAssertSchema = z.object({
+  condition: z.string(),
+  description: z.string(),
+});
+
+export type SpecAssert = z.infer<typeof SpecAssertSchema>;
+
 export const SpecPhaseSchema = z.object({
   title: z.string(),
   description: z.string(),
+  actions: z.array(SpecActionSchema).optional(),
+  asserts: z.array(SpecAssertSchema).optional(),
   successCriteria: z.array(z.string()),
   codeSample: z
     .object({

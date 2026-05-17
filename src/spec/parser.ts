@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { Spec, SpecPhase } from "./schema.js";
+import type { Spec, SpecPhase, SpecAction, SpecAssert } from "./schema.js";
 
 const SECTION_HEADER_RE = /^## (.*)$/;
 const PHASE_HEADER_RE = /^### Phase \d+: (.*)$/;
@@ -7,6 +7,9 @@ const SUCCESS_CRITERIA_RE = /^- \[([ x])\] (.*)$/;
 const CODE_BLOCK_RE = /^```(?:typescript|ts)?\s*\n?$/;
 const GOAL_ITEM_RE = /^- (.*)$/;
 const FILE_ITEM_RE = /^- `([^`]+)`/;
+const FENCE_RE = /^```\S*\s*$/;
+const ACTIONS_MARKER = "**Actions:**";
+const ASSERTS_MARKER = "**Asserts:**";
 
 function parseListItems(lines: string[], startIdx: number): { items: string[]; endIdx: number } {
   const items: string[] = [];
@@ -47,6 +50,95 @@ function extractSection(
   return content.join("\n").trim();
 }
 
+function parseYamlActions(
+  yamlLines: string[],
+): SpecAction[] {
+  const actions: SpecAction[] = [];
+  let i = 0;
+  while (i < yamlLines.length) {
+    const trimmed = yamlLines[i].trim();
+    if (trimmed.startsWith("- tool:")) {
+      const tool = trimmed.slice(7).trim();
+      const args: Record<string, unknown> = {};
+      i++;
+      // parse args block if present
+      while (i < yamlLines.length) {
+        const argLine = yamlLines[i];
+        if (argLine.trim().startsWith("- tool:") || argLine.trim().startsWith("- condition:")) break;
+        if (argLine.trim().startsWith("args:")) {
+          i++;
+          while (i < yamlLines.length) {
+            const kvLine = yamlLines[i];
+            if (!kvLine.startsWith("    ") && !kvLine.startsWith("\t")) break;
+            const kv = kvLine.trim();
+            const colonIdx = kv.indexOf(":");
+            if (colonIdx > 0) {
+              const key = kv.slice(0, colonIdx).trim();
+              let val: unknown = kv.slice(colonIdx + 1).trim();
+              // unquote string values
+              if (typeof val === "string" && val.startsWith('"') && val.endsWith('"')) {
+                val = val.slice(1, -1);
+              }
+              args[key] = val;
+            }
+            i++;
+          }
+          continue;
+        }
+        break;
+      }
+      actions.push({ tool, args });
+    } else {
+      i++;
+    }
+  }
+  return actions;
+}
+
+function parseYamlAsserts(
+  yamlLines: string[],
+): SpecAssert[] {
+  const asserts: SpecAssert[] = [];
+  let current: { condition?: string; description?: string } | null = null;
+
+  for (const line of yamlLines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- condition:")) {
+      if (current?.condition && current?.description) {
+        asserts.push({ condition: current.condition, description: current.description });
+      }
+      current = { condition: trimmed.slice(12).trim() };
+    } else if (trimmed.startsWith("description:") && current) {
+      const desc = trimmed.slice(12).trim();
+      current.description = desc.startsWith('"') && desc.endsWith('"') ? desc.slice(1, -1) : desc;
+    }
+  }
+  if (current?.condition && current?.description) {
+    asserts.push({ condition: current.condition, description: current.description });
+  }
+  return asserts;
+}
+
+function tryParseFencedYamlBlock(
+  lines: string[],
+  startIdx: number,
+  marker: string,
+): { block: string[]; endIdx: number } | null {
+  if (lines[startIdx].trim() !== marker) return null;
+  let i = startIdx + 1;
+  // skip blank lines between marker and fence
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i >= lines.length || !FENCE_RE.test(lines[i].trim())) return null;
+  i++;
+  const block: string[] = [];
+  while (i < lines.length && !FENCE_RE.test(lines[i].trim())) {
+    block.push(lines[i]);
+    i++;
+  }
+  if (i < lines.length) i++; // consume closing ```
+  return { block, endIdx: i };
+}
+
 function parsePhase(lines: string[], startIdx: number): { phase: SpecPhase; endIdx: number } | null {
   const headerMatch = lines[startIdx].match(PHASE_HEADER_RE);
   if (!headerMatch) return null;
@@ -55,6 +147,8 @@ function parsePhase(lines: string[], startIdx: number): { phase: SpecPhase; endI
   let i = startIdx + 1;
   const criteria: string[] = [];
   let codeSample: { file: string; code: string } | undefined;
+  let actions: SpecAction[] | undefined;
+  let asserts: SpecAssert[] | undefined;
 
   while (i < lines.length) {
     const line = lines[i];
@@ -64,6 +158,21 @@ function parsePhase(lines: string[], startIdx: number): { phase: SpecPhase; endI
     if (criteriaMatch) {
       criteria.push(criteriaMatch[2]);
       i++;
+      continue;
+    }
+
+    // Check for **Actions:** / **Asserts:** markers followed by ```yaml block
+    const actionsResult = tryParseFencedYamlBlock(lines, i, ACTIONS_MARKER);
+    if (actionsResult) {
+      actions = parseYamlActions(actionsResult.block);
+      i = actionsResult.endIdx;
+      continue;
+    }
+
+    const assertsResult = tryParseFencedYamlBlock(lines, i, ASSERTS_MARKER);
+    if (assertsResult) {
+      asserts = parseYamlAsserts(assertsResult.block);
+      i = assertsResult.endIdx;
       continue;
     }
 
@@ -92,6 +201,8 @@ function parsePhase(lines: string[], startIdx: number): { phase: SpecPhase; endI
     phase: {
       title,
       description: descLines.join("\n").trim(),
+      actions,
+      asserts,
       successCriteria: criteria,
       codeSample,
     },

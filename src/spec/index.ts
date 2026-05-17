@@ -1,5 +1,5 @@
-export { SpecSchema, SpecPhaseSchema } from "./schema.js";
-export type { Spec, SpecPhase, PhaseStatus } from "./schema.js";
+export { SpecSchema, SpecPhaseSchema, SpecActionSchema, SpecAssertSchema } from "./schema.js";
+export type { Spec, SpecPhase, SpecAction, SpecAssert, PhaseStatus } from "./schema.js";
 
 export { parseSpec, parseSpecFile } from "./parser.js";
 export { getPhaseStatuses, getProgress, getNextIncompletePhase, markPhaseComplete } from "./tracker.js";
