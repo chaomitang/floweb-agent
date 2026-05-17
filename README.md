@@ -1,40 +1,75 @@
 # floweb
 
-基于终端的浏览器自动化工具，内置 LLM 驱动的 Agent。结合 Playwright 浏览器控制、LangGraph Agent 编排、React+Ink TUI，通过自然语言进行交互式网页自动化。
+基于终端的浏览器自动化工具，内置 LLM 驱动的 Agent —— 用自然语言操控浏览器，自动生成 Playwright 脚本。
+
+<img src="docs/images/start.png" width="700" alt="floweb start" />
+
+## Demo
+
+<img src="docs/images/demo.gif" width="700" alt="floweb demo" />
+
+## 界面
+
+<img src="docs/images/chat.png" width="700" alt="Chat interaction" />
+
+*Chat Panel：自然语言交互，agent 操控浏览器并返回结果*
+
+<img src="docs/images/browser-panel.png" width="700" alt="Browser panel" />
+
+*Browser Panel：snapshot 视图，agent 看到的页面结构*
+
+
 
 ## 安装
 
 ```bash
-npm install
-npm run build
+npm install -g floweb
+# 或者本地开发
+git clone git@github.com:chaomitang/floweb-agent.git
+cd floweb-agent
+pnpm install && pnpm build
 ```
 
 ## 快速开始
 
 ```bash
-# 启动命名 session
+floweb tui                    # 启动对话式 TUI
+```
+
+在 TUI 中：
+
+```text
+/open github.com              # 让 agent 打开页面
+Summarize this page           # 自然语言交互
+Click the first link          # 让 agent 操作页面
+/pages                        # slash 命令：查看所有标签页
+```
+
+也可以直接用 CLI：
+
+```bash
 floweb session start mybot https://example.com
-
-# 打开网页
 floweb open https://example.com
+floweb snapshot --session mybot
+floweb session stop mybot
+```
 
-# 启动 TUI（对话式交互）
-floweb tui
+或 MCP 模式接入三方 Agent（Claude Code 等）：
 
-# 运行自动化脚本
-floweb run script.js
-
-# MCP 模式
+```bash
 floweb mcp
 ```
 
-## 技术栈
+## 工作流
 
-- **运行时**: Node.js, TypeScript 5.9, ESM
-- **浏览器**: Playwright（Chromium）
-- **LLM**: LangChain + LangGraph（Anthropic/OpenAI）
-- **TUI**: React 19 + Ink 7
-- **构建**: tsup
+```text
+Explore（探索）→ Spec（规格）→ Validate（验证）→ Script（脚本）
+```
+
+1. **Explore** — 自然语言指挥 agent 浏览页面、点击、填表
+2. **Spec** — 将操作过程固化为可复用的规格文件
+3. **Validate** — 回放验证 spec 是否仍然正确
+4. **Script** — 导出独立 Playwright 脚本，可直接部署
 
 ## 架构
 
@@ -43,19 +78,15 @@ floweb mcp
                     │       DaemonApi (30+ IPC)     │
                     │  统一的浏览器操作接口          │
                     └──────────┬───────────────────┘
-                               │ Unix socket / JSON-line
+                               │ Unix socket
             ┌──────────────────┼──────────────────┐
             ▼                  ▼                  ▼
      ┌──────────┐      ┌──────────┐       ┌──────────┐
      │   CLI    │      │   MCP    │       │   TUI    │
      │ 子命令   │      │  tools   │       │  Agent   │
-     │ 1:1 映射 │      │ 1:1 映射 │       │ 30+ tools│
      └──────────┘      └──────────┘       └──────────┘
-            │                  │                  │
-            └──────────────────┼──────────────────┘
                                ▼
                     ┌──────────────────┐
-                    │   DaemonServer   │
                     │   BrowserManager │
                     │   (Playwright)   │
                     └──────────────────┘
@@ -65,35 +96,29 @@ CLI、MCP、TUI 三种接入方式能力完全对等，底层走同一个 Daemon
 
 ## Skills 系统
 
+三种 skill 覆盖不同接入场景：
+
 | Skill | 适用场景 | 调用方式 |
 |---|---|---|
-| `floweb` | TUI 内置 LangGraph Agent | 直接调用工具（35 个） |
-| `floweb-cli` | 三方 Agent（Claude Code 等） | `floweb <subcommand>` CLI 命令 |
+| `floweb` | TUI 内置 LangGraph Agent | 直接调用 35 个工具 |
+| `floweb-cli` | 三方 Agent（Claude Code 等） | `floweb <subcommand>` CLI |
 | `floweb-mcp` | 三方 Agent（Claude Code 等） | `browser_*` MCP tools |
-
-核心工作流：Explore（探索）→ Spec（规格）→ Validate（验证）→ Script（脚本）
-
-## Session 管理
-
-```bash
-floweb session start <name> [url]   # 创建命名 session
-floweb session stop  <name>          # 关闭 session
-floweb session list                   # 列出运行中的 session
-floweb session status                 # JSON 状态
-```
 
 ## 配置
 
-`~/.floweb/config.json`：
+首次运行自动创建 `~/.floweb/config.json`：
 
 ```json
 {
   "llm": {
-    "provider": "openai | anthropic",
-    "model": "...",
-    "apiKey": "...",
-    "baseUrl": "..."
-  },
-  "sessionName": "default"
+    "provider": "openai",
+    "model": "deepseek-v4-pro",
+    "apiKey": "",
+    "baseUrl": "https://api.deepseek.com/v1"
+  }
 }
 ```
+
+## License
+
+MIT

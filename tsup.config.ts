@@ -1,5 +1,10 @@
 import { defineConfig } from "tsup";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+
+function resolveAliases(): void {
+  execSync("npx tsc-alias -p tsconfig.json", { stdio: "inherit" });
+}
 
 function ensureCliShebang(): void {
   const entryPath = "dist/cli/index.js";
@@ -19,6 +24,9 @@ export default defineConfig([
     minify: false,
     clean: ["**", "!cli/**"],
     outDir: "dist",
+    onSuccess: async () => {
+      resolveAliases();
+    },
   },
   {
     entry: ["src/cli/**/*.ts", "!src/cli/**/*.test.ts"],
@@ -29,6 +37,7 @@ export default defineConfig([
     clean: true,
     outDir: "dist/cli",
     onSuccess: async () => {
+      resolveAliases();
       ensureCliShebang();
     },
   },

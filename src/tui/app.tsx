@@ -458,7 +458,7 @@ export function App({ config, socketPath, initialUrl, sessionName }: AppProps) {
       let client: DaemonClient;
 
       try {
-        addMessage({ role: "system", content: `Config: ${getConfigPath()}` });
+        addMessage({ role: "system", content: `Config: ~/.floweb/config.json` });
         setSessionStatus("connecting", "Connecting to daemon...");
         addMessage({ role: "system", content: "Connecting to daemon..." });
         client = await DaemonClient.connect(sp, handlers);

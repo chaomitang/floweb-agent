@@ -24,7 +24,7 @@
     "snapshot": "node dist/cli/index.js snapshot",
     "close": "node dist/cli/index.js close",
     "dev": "tsup --watch",
-    "build": "tsup && tsc-alias -p tsconfig.json",
+    "build": "tsup",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",

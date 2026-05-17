@@ -136,16 +136,15 @@ CLI、MCP、TUI 三种接入方式能力完全对等，底层走同一个 Daemon
 ```json
 {
   "llm": {
-    "provider": "openai | anthropic",
-    "model": "...",
-    "apiKey": "...",
-    "baseUrl": "..."
-  },
-  "sessionName": "default"
+    "provider": "openai",
+    "model": "deepseek-v4-pro",
+    "apiKey": "",
+    "baseUrl": "https://api.deepseek.com/v1"
+  }
 }
 ```
 
-环境变量：`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`FLOWEB_SOCKET`（`floweb run` 时自动设置给子进程）。
+`FLOWEB_SOCKET` 由 `floweb run` 自动设置给子进程，用户无需手动配置。
 
 `resolveConfig()` 会将文件和 CLI 参数做深度合并（特别是 LLM 对象）。`sessionName` 决定 socket 路径：默认 session 用 `/tmp/floweb-${uid}.sock`，命名 session 用 `/tmp/floweb-${uid}-<name>.sock`。
 
