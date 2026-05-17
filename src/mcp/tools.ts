@@ -1,5 +1,4 @@
-import { DaemonClient } from "../daemon/ipc/client.js";
-import type { DaemonApi } from "../daemon/ipc/api.js";
+import type { DaemonClient } from "../daemon/ipc/client.js";
 
 export interface McpTool {
   name: string;
@@ -10,8 +9,6 @@ export interface McpTool {
     required?: string[];
   };
 }
-
-type Remote = DaemonClient["remote"];
 
 export function getMcpTools(): McpTool[] {
   return [
@@ -130,14 +127,36 @@ export function getMcpTools(): McpTool[] {
         },
       },
     },
+    // ── Visual Feedback ──
+    {
+      name: "browser_move_cursor",
+      description: "Move the visual cursor indicator to pixel coordinates on the page. The cursor is a visual feedback element, not the system mouse.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          x: { type: "number", description: "X pixel coordinate" },
+          y: { type: "number", description: "Y pixel coordinate" },
+        },
+        required: ["x", "y"],
+      },
+    },
+    {
+      name: "browser_highlight",
+      description: "Highlight an element on the page with a visual overlay. Useful for showing which element will be interacted with next.",
+      inputSchema: {
+        type: "object",
+        properties: { selector: { type: "string", description: "CSS selector of the element to highlight" } },
+        required: ["selector"],
+      },
+    },
     // ── Tab Management ──
     {
       name: "browser_switch_tab",
       description: "Switch to a different browser tab by its page ID.",
       inputSchema: {
         type: "object",
-        properties: { page_id: { type: "string", description: "Page ID to switch to" } },
-        required: ["page_id"],
+        properties: { pageId: { type: "string", description: "Page ID to switch to" } },
+        required: ["pageId"],
       },
     },
     {
@@ -145,8 +164,8 @@ export function getMcpTools(): McpTool[] {
       description: "Close a browser tab by its page ID.",
       inputSchema: {
         type: "object",
-        properties: { page_id: { type: "string", description: "Page ID to close" } },
-        required: ["page_id"],
+        properties: { pageId: { type: "string", description: "Page ID to close" } },
+        required: ["pageId"],
       },
     },
     {
@@ -169,7 +188,10 @@ export function getMcpTools(): McpTool[] {
       description: "Execute TypeScript/JavaScript code in a persistent REPL within the browser context. Has access to `page`, `browser`, `context` (Playwright objects).",
       inputSchema: {
         type: "object",
-        properties: { code: { type: "string", description: "TypeScript/JavaScript code to execute" } },
+        properties: {
+          code: { type: "string", description: "TypeScript/JavaScript code to execute" },
+          timeout: { type: "number", description: "Request timeout in milliseconds (default 120000 = 2 min)" },
+        },
         required: ["code"],
       },
     },
@@ -212,6 +234,11 @@ export function getMcpTools(): McpTool[] {
       inputSchema: { type: "object", properties: {} },
     },
     {
+      name: "browser_compact_html",
+      description: "Get a compacted version of the current page HTML. Removes <script>/<style> content, HTML comments, base64 data, non-semantic CSS classes, framework attributes, etc. Saves 70-90% tokens compared to full HTML.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
       name: "browser_set_observing",
       description: "Toggle observation mode. Set true to enter (user is manually operating the browser), false to exit.",
       inputSchema: {
@@ -224,10 +251,11 @@ export function getMcpTools(): McpTool[] {
 }
 
 export async function callTool(
-  remote: Remote,
+  client: DaemonClient,
   name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const { remote } = client;
   let text: string;
 
   switch (name) {
@@ -297,33 +325,33 @@ export async function callTool(
       await remote.scroll((args.x as number) ?? 0, (args.y as number) ?? 0);
       text = `Scrolled (${args.x ?? 0}, ${args.y ?? 0})`;
       break;
+    // ── Visual Feedback ──
+    case "browser_move_cursor":
+      await remote.moveCursor(args.x as number, args.y as number);
+      text = `Cursor moved to (${args.x}, ${args.y})`;
+      break;
+    case "browser_highlight":
+      await remote.highlightElement(args.selector as string);
+      text = `Highlighted "${args.selector}"`;
+      break;
     case "browser_select": {
       const selValue = args.value as string;
-      await remote.evaluate(
-        `(async () => { const el = document.querySelector(${JSON.stringify(args.selector)}); el.value = ${JSON.stringify(selValue)}; el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
-      );
+      await remote.select(args.selector as string, selValue);
       text = `Selected "${selValue}" in ${args.selector}`;
       break;
     }
     case "browser_wait":
-      if (args.selector) {
-        await remote.evaluate(
-          `new Promise(r => { const s = ${JSON.stringify(args.selector)}; const el = document.querySelector(s); if (el) r('found'); else new MutationObserver((_, obs) => { if (document.querySelector(s)) { obs.disconnect(); r('found'); } }).observe(document, { childList: true, subtree: true }); })`,
-        );
-        text = `Element "${args.selector}" appeared`;
-      } else {
-        await new Promise((r) => setTimeout(r, (args.ms as number) ?? 1000));
-        text = `Waited ${args.ms ?? 1000}ms`;
-      }
+      await remote.waitFor(args.ms as number | undefined, args.selector as string | undefined);
+      text = args.selector ? `Element "${args.selector}" appeared` : `Waited ${args.ms ?? 1000}ms`;
       break;
     // ── Tab Management ──
     case "browser_switch_tab":
-      await remote.switchToPage(args.page_id as string);
-      text = `Switched to page ${args.page_id}`;
+      await remote.switchToPage(args.pageId as string);
+      text = `Switched to page ${args.pageId}`;
       break;
     case "browser_close_tab":
-      await remote.closePage(args.page_id as string);
-      text = `Closed page ${args.page_id}`;
+      await remote.closePage(args.pageId as string);
+      text = `Closed page ${args.pageId}`;
       break;
     case "browser_close_session":
       await remote.closeSession();
@@ -336,10 +364,16 @@ export async function callTool(
       break;
     }
     case "browser_exec": {
-      const result = await remote.execCode(args.code as string);
-      text = [result.output, result.result !== undefined ? `=> ${result.result}` : "", result.diff ? `\n--- Diff ---\n${result.diff}` : ""]
-        .filter(Boolean)
-        .join("\n");
+      const timeout = (args.timeout as number) ?? 120000;
+      client.setRequestTimeout(timeout);
+      try {
+        const result = await remote.execCode(args.code as string);
+        text = [result.output, result.result !== undefined ? `=> ${result.result}` : "", result.diff ? `\n--- Diff ---\n${result.diff}` : ""]
+          .filter(Boolean)
+          .join("\n");
+      } finally {
+        client.setRequestTimeout(30000);
+      }
       break;
     }
     // ── Network & Auth ──
@@ -372,6 +406,15 @@ export async function callTool(
     case "browser_screenshot": {
       const b64 = await remote.screenshot();
       text = `Screenshot (base64, ${b64.length} chars)`;
+      break;
+    }
+    case "browser_compact_html": {
+      const result = await remote.compactHTML();
+      text = [
+        `Compacted HTML: ${result.condensedLength} chars (was ${result.originalLength}, ${Object.entries(result.reductions).map(([k, v]) => `${k} -${v}`).join(", ")})`,
+        "",
+        result.html,
+      ].join("\n");
       break;
     }
     case "browser_set_observing":

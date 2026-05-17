@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef } from "react";
-import { AgentRuntime } from "../../agent/runtime.js";
-import { SkillRegistry } from "../../skills/registry.js";
-import { getGlobalSkillsDir } from "../../core/config.js";
-import type { DaemonClient } from "../../daemon/ipc/client.js";
-import type { AgentConfig, AgentStreamEvent } from "../../agent/types.js";
+import { AgentRuntime } from "@/agent/runtime.js";
+import { SkillRegistry } from "@/skills/registry.js";
+import { getGlobalSkillsDir } from "@/core/config.js";
+import type { DaemonClient } from "@/daemon/ipc/client.js";
+import type { AgentConfig, AgentStreamEvent } from "@/agent/types.js";
 
 export interface AgentHookState {
   status: "idle" | "thinking" | "executing" | "error";

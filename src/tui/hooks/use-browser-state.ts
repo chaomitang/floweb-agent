@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { PageInfo } from "../../core/types.js";
+import type { PageInfo } from "@/core/types.js";
 
 export interface ChatMessage {
   role: "user" | "system" | "agent" | "tool";

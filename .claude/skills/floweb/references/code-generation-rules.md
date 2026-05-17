@@ -36,7 +36,6 @@ return { title, url: page.url() };
 ```typescript
 // scripts/my-workflow.ts
 import { chromium } from "playwright";
-import { fileURLToPath } from "url";
 
 type Input = {
   keyword: string;
@@ -64,21 +63,10 @@ export default async function myWorkflow(input: Input): Promise<Output> {
     await browser.close();
   }
 }
-
-// 直接运行时自执行
-const isMain = process.argv[1] === fileURLToPath(import.meta.url);
-if (isMain) {
-  const keyword = process.argv[2] || "默认关键词";
-  myWorkflow({ keyword }).then((output) => {
-    console.log(JSON.stringify(output, null, 2));
-  });
-}
 ```
 
 要点：
-- 始终 `export default` 主工作流函数，同时**必须**附带自执行入口块
-- 自执行块用 `process.argv[1] === fileURLToPath(import.meta.url)` 判断是否为入口模块，确保被 `import` 时不会自动运行
-- `process.argv[2]` 作为 CLI 参数传入，提供合理的默认值
+- 始终 `export default` 主工作流函数
 - `input` 参数定义工作流需要的输入
 - 用 `console.log`/`console.warn`/`console.error` 记录日志
 - 脚本负责启动和关闭浏览器（仅在模式 B 中）

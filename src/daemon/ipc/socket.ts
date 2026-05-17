@@ -121,7 +121,10 @@ export async function removeStaleSocketFile(socketPath: string): Promise<void> {
   }
 }
 
-export function getDaemonSocketPath(): string {
+export function getDaemonSocketPath(sessionName?: string): string {
   const uid = userInfo().uid;
-  return `/tmp/floweb-${uid}.sock`;
+  if (!sessionName || sessionName === "default") {
+    return `/tmp/floweb-${uid}.sock`;
+  }
+  return `/tmp/floweb-${uid}-${sessionName}.sock`;
 }

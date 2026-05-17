@@ -1,4 +1,4 @@
-import type { PageInfo } from "../../core/types.js";
+import type { PageInfo } from "@/core/types.js";
 
 // ─── Daemon → Client (methods exposed by the daemon) ─────────────────
 
@@ -33,6 +33,8 @@ export interface DaemonApi {
   setAgentBorder(color: "pink" | "yellow"): void;
   click(selector: string): void;
   typeText(selector: string, text: string): void;
+  select(selector: string, value: string): void;
+  waitFor(ms?: number, selector?: string): void;
   pressKey(key: string): void;
   hover(selector: string): void;
   scroll(x: number, y: number): void;
@@ -42,6 +44,7 @@ export interface DaemonApi {
   reloadPage(): void;
   // Session control
   saveProfile(domain: string): void;
+  shutdown(): void;
 }
 
 // ─── Client → Daemon (methods exposed by each client, pushed to) ─────

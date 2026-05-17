@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { DaemonClient } from "../../daemon/ipc/client.js";
+import type { DaemonClient } from "@/daemon/ipc/client.js";
 import type { ChatMessage } from "./use-browser-state.js";
 import type { AgentHook } from "./use-agent.js";
 

@@ -1,6 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { SkillRegistry } from "../../skills/registry.js";
+import type { SkillRegistry } from "@/skills/registry.js";
 
 export function createSkillTools(getRegistry: () => SkillRegistry | null) {
   const registry = () => {

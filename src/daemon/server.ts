@@ -19,6 +19,7 @@ export class DaemonServer {
   private browserManager: BrowserManager;
   private config: FlowebConfig;
   private server: Server | null = null;
+  private socketPath: string | null = null;
   private clients = new Set<IpcPeer<ClientApi>>();
   private sessionId: string;
   private currentRole: "user" | "agent" = "user";
@@ -71,6 +72,7 @@ export class DaemonServer {
   }
 
   async start(socketPath: string): Promise<void> {
+    this.socketPath = socketPath;
     await removeStaleSocketFile(socketPath);
 
     this.server = createIpcSocketServer((transport) => {
@@ -210,6 +212,16 @@ export class DaemonServer {
         this.logAction("type", `${text} → ${selector}`);
         return this.guard(() => this.browserManager.typeText(selector, text));
       },
+      select: (selector: string, value: string) => {
+        this.logAction("select", `${value} → ${selector}`);
+        return this.guard(() => this.browserManager.select(selector, value));
+      },
+      waitFor: (ms?: number, selector?: string) => {
+        if (selector) {
+          this.logAction("wait", `waiting for "${selector}" (timeout ${ms ?? 30000}ms)`);
+        }
+        return this.browserManager.waitFor(ms, selector);
+      },
       pressKey: (key: string) => {
         this.logAction("press", key);
         return this.guard(() => this.browserManager.pressKey(key));
@@ -245,6 +257,20 @@ export class DaemonServer {
           await mkdir(profilesDir, { recursive: true });
           await writeFile(join(profilesDir, `${domain}.json`), JSON.stringify(profile, null, 2));
         });
+      },
+
+      shutdown: () => {
+        this.logAction("shutdown", `session "${this.config.sessionName}"`);
+        const sp = this.socketPath;
+        // 延迟退出，让响应先发回客户端
+        setTimeout(async () => {
+          await this.browserManager.dispose();
+          if (sp) {
+            const { unlink } = await import("node:fs/promises");
+            await unlink(sp).catch(() => {});
+          }
+          process.exit(0);
+        }, 100);
       },
     };
 

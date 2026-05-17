@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   const browserManager = new BrowserManager();
 
   // 3. Create DaemonServer and bind to socket
-  const socketPath = getDaemonSocketPath();
+  const socketPath = getDaemonSocketPath(config.sessionName);
   const daemonServer = new DaemonServer(browserManager, config);
 
   await daemonServer.start(socketPath);

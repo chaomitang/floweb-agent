@@ -1,11 +1,11 @@
 import React from "react";
 import { useInput } from "ink";
-import { Layout } from "./components/layout.js";
-import type { FocusPanel } from "./components/layout.js";
-import { useBrowserState } from "./hooks/use-browser-state.js";
-import type { ActionLogEntry } from "./hooks/use-browser-state.js";
-import { createCommandExecutor } from "./hooks/use-command-input.js";
-import { useAgent } from "./hooks/use-agent.js";
+import { Layout } from "@/tui/components/layout.js";
+import type { FocusPanel } from "@/tui/components/layout.js";
+import { useBrowserState } from "@/tui/hooks/use-browser-state.js";
+import type { ActionLogEntry } from "@/tui/hooks/use-browser-state.js";
+import { createCommandExecutor } from "@/tui/hooks/use-command-input.js";
+import { useAgent } from "@/tui/hooks/use-agent.js";
 import { DaemonClient } from "../daemon/ipc/client.js";
 import { getDaemonSocketPath } from "../daemon/ipc/socket.js";
 import type { ClientApi } from "../daemon/ipc/api.js";

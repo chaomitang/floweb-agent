@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { PageInfo } from "../../core/types.js";
+import type { PageInfo } from "@/core/types.js";
 import type { ActionLogEntry } from "../hooks/use-browser-state.js";
 
 interface BrowserPanelProps {

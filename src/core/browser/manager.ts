@@ -347,6 +347,23 @@ export class BrowserManager extends EventEmitter {
     await page.fill(selector, text, { timeout: 10000 });
   }
 
+  async select(selector: string, value: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    await this.showVisualFeedback(page, selector);
+    await page.selectOption(selector, value, { timeout: 10000 });
+  }
+
+  async waitFor(ms?: number, selector?: string): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) throw new Error("No active page");
+    if (selector) {
+      await page.waitForSelector(selector, { state: "attached", timeout: ms ?? 30000 });
+    } else {
+      await page.waitForTimeout(ms ?? 1000);
+    }
+  }
+
   private async showVisualFeedback(page: Page, selector: string): Promise<void> {
     try {
       // 确保可视化层存在（兼容旧页面，idempotent）

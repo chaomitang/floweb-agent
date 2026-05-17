@@ -9,9 +9,9 @@ import type { DaemonClient } from "../daemon/ipc/client.js";
 import type { SkillRegistry } from "../skills/registry.js";
 import type { AgentConfig, AgentState, AgentStreamEvent } from "./types.js";
 import { buildSystemPrompt, buildObservationPrompt } from "./prompts.js";
-import { createBrowserTools } from "./tools/browser.tools.js";
-import { createSpecTools } from "./tools/spec.tools.js";
-import { createSkillTools } from "./tools/skill.tools.js";
+import { createBrowserTools } from "@/agent/tools/browser.tools.js";
+import { createSpecTools } from "@/agent/tools/spec.tools.js";
+import { createSkillTools } from "@/agent/tools/skill.tools.js";
 
 export class AgentRuntime {
   private model: ChatAnthropic | ChatOpenAI | ChatDeepSeek;

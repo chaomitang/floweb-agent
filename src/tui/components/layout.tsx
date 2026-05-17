@@ -6,7 +6,7 @@ import { BrowserPanel } from "./browser-panel.js";
 import { InputBar } from "./input-bar.js";
 import { StatusBar } from "./status-bar.js";
 import { AgentStatus } from "./agent-status.js";
-import type { PageInfo } from "../../core/types.js";
+import type { PageInfo } from "@/core/types.js";
 import type { ActionLogEntry, ChatMessage } from "../hooks/use-browser-state.js";
 export type FocusPanel = "chat" | "browser";
 

@@ -2,7 +2,6 @@ import { createInterface } from "node:readline";
 import { DaemonClient } from "../daemon/ipc/client.js";
 import { getDaemonSocketPath } from "../daemon/ipc/socket.js";
 import { resolveConfig } from "../core/config.js";
-import { initConfig } from "../core/config.js";
 import { getMcpTools, callTool } from "./tools.js";
 import type { McpTool } from "./tools.js";
 
@@ -23,38 +22,58 @@ function error(id: number | string | undefined, code: number, message: string): 
   );
 }
 
-export async function startMcpServer(): Promise<void> {
-  const config = resolveConfig();
-  initConfig();
+function log(msg: string): void {
+  process.stderr.write(`[floweb mcp] ${msg}\n`);
+}
 
+export async function startMcpServer(sessionName?: string): Promise<void> {
+  const config = resolveConfig();
+  if (sessionName) {
+    config.sessionName = sessionName;
+  }
+
+  const socketPath = getDaemonSocketPath(sessionName);
+
+  log(`connecting to daemon (session: ${sessionName ?? "default"})...`);
   let client: DaemonClient;
+
   try {
-    client = await DaemonClient.connect(getDaemonSocketPath(), {
+    client = await DaemonClient.connect(socketPath, {
       pagesChanged() {},
       sessionStatusChanged() {},
       actionLogged() {},
       observingChanged() {},
     });
+    log("connected to existing daemon");
   } catch {
-    // Spawn daemon if not running
-    const spawned = await DaemonClient.spawn(config, {
-      pagesChanged() {},
-      sessionStatusChanged() {},
-      actionLogged() {},
-      observingChanged() {},
-    });
-    client = spawned.client;
+    // 启动新的 daemon
+    log("spawning daemon...");
+    try {
+      const spawned = await DaemonClient.spawn(config, {
+        pagesChanged() {},
+        sessionStatusChanged() {},
+        actionLogged() {},
+        observingChanged() {},
+      });
+      client = spawned.client;
+      log(`daemon started (pid ${spawned.pid})`);
+    } catch (err) {
+      log(`failed to start daemon: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
   }
 
   const tools = getMcpTools();
+  log(`ready, ${tools.length} tools available`);
 
-  const rl = createInterface({ input: process.stdin });
+  const rl = createInterface({ input: process.stdin, terminal: false });
+
   rl.on("line", async (line: string) => {
     let req: JsonRpcRequest;
     try {
       req = JSON.parse(line);
     } catch {
-      return; // skip malformed input
+      return;
     }
 
     try {
@@ -68,11 +87,13 @@ export async function startMcpServer(): Promise<void> {
           break;
 
         case "tools/list":
-          respond(req.id, { tools: tools.map((t: McpTool) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema,
-          })) });
+          respond(req.id, {
+            tools: tools.map((t: McpTool) => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+            })),
+          });
           break;
 
         case "tools/call": {
@@ -81,13 +102,12 @@ export async function startMcpServer(): Promise<void> {
             error(req.id, -32602, "Missing tool name");
             return;
           }
-          const result = await callTool(client.remote, params.name, params.arguments ?? {});
+          const result = await callTool(client, params.name, params.arguments ?? {});
           respond(req.id, result);
           break;
         }
 
         case "notifications/initialized":
-          // No response needed for notifications
           break;
 
         default:
@@ -95,10 +115,14 @@ export async function startMcpServer(): Promise<void> {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      log(`error: ${msg}`);
       error(req.id, -32000, msg);
     }
   });
 
-  // Send a ready notification (optional but helpful for debugging)
-  process.stderr.write("floweb MCP server ready\n");
+  rl.on("close", () => {
+    log("stdin closed, exiting");
+    client.destroy();
+    process.exit(0);
+  });
 }

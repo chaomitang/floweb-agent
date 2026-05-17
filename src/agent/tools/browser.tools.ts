@@ -1,6 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { DaemonClient } from "../../daemon/ipc/client.js";
+import type { DaemonClient } from "@/daemon/ipc/client.js";
 
 export function createBrowserTools(getClient: () => DaemonClient | null) {
   const client = () => {
@@ -347,15 +347,8 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const wait = tool(
     async ({ ms, selector }: { ms?: number; selector?: string }) => {
-      if (selector) {
-        await client().remote.evaluate(
-          `new Promise(r => { const el = document.querySelector(${JSON.stringify(selector)}); if (el) r('found'); else new MutationObserver((_, obs) => { if (document.querySelector(${JSON.stringify(selector)})) { obs.disconnect(); r('found'); } }).observe(document, { childList: true, subtree: true }); })`,
-        );
-        return `Element "${selector}" appeared`;
-      }
-      const timeout = ms ?? 1000;
-      await new Promise((r) => setTimeout(r, timeout));
-      return `Waited ${timeout}ms`;
+      await client().remote.waitFor(ms, selector);
+      return selector ? `Element "${selector}" appeared` : `Waited ${ms ?? 1000}ms`;
     },
     {
       name: "browser_wait",
@@ -369,9 +362,7 @@ export function createBrowserTools(getClient: () => DaemonClient | null) {
 
   const selectOption = tool(
     async ({ selector, value }: { selector: string; value: string }) => {
-      await client().remote.evaluate(
-        `(async () => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Not found'); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
-      );
+      await client().remote.select(selector, value);
       return `Selected "${value}" in ${selector}`;
     },
     {

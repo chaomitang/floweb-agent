@@ -4,7 +4,7 @@ import { connectToIpcSocket, createJsonSocketTransport } from "./socket.js";
 import { createIpcPeer } from "./protocol.js";
 import type { IpcPeer } from "./protocol.js";
 import type { DaemonApi, ClientApi, DaemonReadyMessage } from "./api.js";
-import type { FlowebConfig } from "../../core/config.js";
+import type { FlowebConfig } from "@/core/config.js";
 
 export type DaemonClientOptions = {
   timeoutMs?: number;
